@@ -1,20 +1,25 @@
-import React, {PureComponent, Fragment} from 'react';
-import {render} from 'react-dom';
-
-import game from './game/game';
+import { startGame, stopGame } from './instagib/launcher.js';
 
 import './main.scss';
 
-class Game extends PureComponent {
-  componentDidMount() {
-    game.init();
-  }
-
-  render() {
-    return (
-      <canvas id="plot">Обновите браузер</canvas>
-    );
-  }
+const container = document.querySelector('.js-app');
+if (!container) {
+  throw new Error('Root container .js-app not found');
 }
 
-render(<Game/>, document.querySelector('.js-app'));
+const canvas = document.createElement('canvas');
+canvas.id = 'plot';
+canvas.textContent = 'Обновите браузер';
+container.appendChild(canvas);
+
+startGame(canvas).catch((err) => {
+  console.error('Game start failed:', err);
+});
+
+window.addEventListener('beforeunload', stopGame);
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stopGame();
+  });
+}
