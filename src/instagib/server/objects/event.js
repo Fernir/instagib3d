@@ -29,7 +29,7 @@ Event.on("botpain", function(bot, bullet)
     }
 });
 
-Event.on("botdead", function(bot, killer, bullet, isLava)
+Event.on("botdead", function(bot, _killer, bullet, _isLava)
 {
     //gibs
     let dir = new Vector(0, 0);
@@ -54,7 +54,7 @@ Event.on("botdead", function(bot, killer, bullet, isLava)
     bot.game.events.push(new GameEvent(EVENT.BOT_DEAD, bot.dynent.pos, dir, bot.id));
 });
 
-Event.on("takeweapon", function(bot, type, val)
+Event.on("takeweapon", function(bot)
 {
     bot.game.events.push(new GameEvent(EVENT.TAKE_WEAPON, bot.dynent.pos, null));
 });
@@ -69,7 +69,7 @@ Event.on("takeshield", function(bot)
     bot.game.events.push(new GameEvent(EVENT.TAKE_SHIELD, bot.dynent.pos, null));
 });
 
-Event.on("takepower", function(bot, type)
+Event.on("takepower", function(bot)
 {
     bot.game.events.push(new GameEvent(EVENT.TAKE_POWER, bot.dynent.pos, null));
 });

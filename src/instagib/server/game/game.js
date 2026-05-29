@@ -104,7 +104,7 @@ constructor(size_class, seed)
 
         let listbots = [];
         for (let i = 0; i < self.bots.length; i++)
-            if (self.bots[i] !== client.spectator && isVisible(client.spectator, self.bots[i].dynent))
+            if (self.bots[i] !== client.spectator)
                 listbots.push(self.bots[i]);
 
         let listitems = [];
@@ -274,7 +274,9 @@ constructor(size_class, seed)
     this.setUserInputs = function(client, user_inputs)
     {
         let bot = client.bot;
+        if (!bot) return;
         if (bot.dynent) bot.dynent.angle = user_inputs.angle;
+        bot.pitch = user_inputs.pitch || 0;
         bot.key_up = user_inputs.up;
         bot.key_left = user_inputs.left;
         bot.key_down = user_inputs.down;
@@ -317,6 +319,20 @@ constructor(size_class, seed)
     };
     this.spectator = function(client, nick)
     {
+        // Без аргумента — берём первого живого бота (или просто первого).
+        if (!nick)
+        {
+            let pick = null;
+            for (let i = 0; i < this.bots.length; i++)
+            {
+                if (this.bots[i] === client.bot) continue;
+                if (this.bots[i].alive) { pick = this.bots[i]; break; }
+            }
+            if (!pick && this.bots.length > 0) pick = this.bots[0];
+            if (!pick) return "No bots available";
+            client.spectator = pick;
+            return "Ok";
+        }
         for (let i = 0; i < this.bots.length; i++)
         {
             if (this.bots[i].nick === nick)

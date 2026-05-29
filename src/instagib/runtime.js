@@ -25,11 +25,12 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     Bot,
     Particle,
     Sound,
+    Q2FX,
     normalizeAngle,
     Vector,
   } = await getGameApi();
 
-  const options = { sens: 0.1, highQuality: true, ...userOptions };
+  const options = { sens: 0.1, ...userOptions };
   const stats = {
     count_kadr: 0,
     count_dynent_rendering: 0,
@@ -43,6 +44,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   state.options = options;
   state.stats = stats;
   state.gameClient = null;
+  if (typeof window !== 'undefined') window.__instagibState = state;
   state.Console = Console;
   state.Event = Event;
   state.Vector = Vector;
@@ -50,6 +52,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   const input = {
     mouse_angle: 0,
+    mouse_pitch: 0,
     mouse_down: false,
     mouse_wheel: 0,
     keys: new Array(256),
@@ -68,21 +71,31 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   let destroyed = false;
   let assetsStarted = false;
   let audioUnlocked = false;
+  state.audioUnlocked = false;
 
   Howler.autoUnlock = true;
 
   function updateAudioMute() {
-    Howler.mute(!audioUnlocked || document.hidden);
+    Howler.mute(!state.soundEnabled || !audioUnlocked || document.hidden);
+  }
+  state.updateAudioMute = updateAudioMute;
+
+  function setAudioUnlocked(value) {
+    audioUnlocked = value;
+    state.audioUnlocked = value;
+    updateAudioMute();
   }
 
   function unlockAudio() {
     if (audioUnlocked) return;
-    audioUnlocked = true;
     const ctx = Howler.ctx;
     if (ctx?.state === 'suspended') {
-      ctx.resume().catch(() => {});
+      ctx.resume()
+        .then(() => setAudioUnlocked(true))
+        .catch(() => updateAudioMute());
+      return;
     }
-    updateAudioMute();
+    setAudioUnlocked(true);
   }
 
   function bindVisibility() {
@@ -105,6 +118,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     HUD.load();
     Bot.load();
     Particle.load();
+    Q2FX.load();
   }
 
   function bindFirstGesture() {
@@ -119,6 +133,11 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     const angle = (input.mouse_angle * options.sens) % 360;
     return normalizeAngle((-angle / 360.0) * (2 * Math.PI));
   };
+  state.getMousePitch = function getMousePitch() {
+    const pitch = (-input.mouse_pitch * options.sens / 360.0) * (2 * Math.PI);
+    const limit = Math.PI * 0.48;
+    return Math.max(-limit, Math.min(limit, pitch));
+  };
 
   function glInit() {
     canvas.style.display = 'block';
@@ -129,7 +148,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     gl = canvas.getContext('webgl', {
       alpha: false,
       antialias: false,
-      depth: false,
+      depth: true,
       premultipliedAlpha: true,
       preserveDrawingBuffer: true,
       stencil: false,
@@ -138,6 +157,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     state.gl = gl;
 
     const buffer = gl.createBuffer();
+    state.quadBuffer = buffer;
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
       -1, -1, 1, -1, -1, 1, 1, 1,
@@ -151,27 +171,70 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   function initEvents() {
     document.addEventListener('keydown', (event) => {
+      if (!state.playing) {
+        event.preventDefault();
+        return;
+      }
       Event.emit('keydown', event.key);
       if (!Console.show) input.keys[event.keyCode] = true;
       event.preventDefault();
     }, false);
     document.addEventListener('keyup', (event) => {
+      if (!state.playing) {
+        event.preventDefault();
+        return;
+      }
       Event.emit('keyup', event.key);
       if (!Console.show) input.keys[event.keyCode] = false;
       event.preventDefault();
     }, false);
-    canvas.addEventListener('click', () => {
+    canvas.addEventListener('click', (e) => {
       startAssetLoads();
-      canvas.requestPointerLock?.();
+      if (gameClient && !gameClient.isPlaying()) {
+        const rect = canvas.getBoundingClientRect();
+        const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+        const btn = gameClient.playButtonHitTest();
+        if (Math.abs(nx - btn.x) <= btn.w && Math.abs(ny - btn.y) <= btn.h) {
+          gameClient.handlePlayClick();
+          return;
+        }
+      }
+      if (gameClient && gameClient.isPlaying()) {
+        canvas.requestPointerLock?.();
+      }
     }, false);
-    canvas.addEventListener('mouseup', () => { input.mouse_down = false; }, false);
-    canvas.addEventListener('mousedown', () => { input.mouse_down = true; }, false);
+    canvas.addEventListener('mouseup', () => {
+      if (!state.playing) return;
+      input.mouse_down = false;
+    }, false);
+    canvas.addEventListener('mousedown', () => {
+      if (!state.playing) return;
+      input.mouse_down = true;
+    }, false);
     canvas.addEventListener('mousemove', (event) => {
-      if (event.movementX !== undefined) input.mouse_angle += event.movementX;
+      if (!state.playing) {
+        // В overlay-режиме (до нажатия Play) отслеживаем курсор в NDC,
+        // чтобы кнопки могли подсвечиваться при наведении.
+        const rect = canvas.getBoundingClientRect();
+        state.overlayMouse = {
+          x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          y: -(((event.clientY - rect.top) / rect.height) * 2 - 1),
+        };
+        return;
+      }
+      if (event.movementX !== undefined) {
+        input.mouse_angle += event.movementX;
+        input.mouse_pitch += event.movementY || 0;
+      }
       else input.mouse_angle = event.pageX;
     }, false);
     let lastWheel = 0;
     canvas.addEventListener('wheel', (e) => {
+      if (!state.playing) {
+        e.preventDefault();
+        return;
+      }
       if (Date.now() > lastWheel) {
         lastWheel = Date.now() + 60;
         const delta = e.deltaY || e.detail || e.wheelDelta;
@@ -222,9 +285,9 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       renderLoop();
       return;
     }
+    if (!assetsStarted) startAssetLoads();
     if (textReady()) {
-      const msg = assetsStarted ? '#rLoading...' : '#rClick to start';
-      text.render([0, 0], 2, msg, 2, { center: true });
+      text.render([0, 0], 2, '#rLoading...', 2, { center: true });
     }
     animationId = requestAnimationFrame(renderLoading);
   }

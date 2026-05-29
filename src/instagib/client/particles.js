@@ -15,7 +15,6 @@ class Particle {
     this.type = type;
     this.time = Date.now();
     this.lifetime = 400;
-    this.last_update = Date.now();
 
     if (type & Particle.EXPLODE) {
       this.lifetime = 500;
@@ -43,19 +42,10 @@ class Particle {
         this.dynent.size.set(4, 4);
         this.lifetime = 500;
       }
-    } else if (type & Particle.GIB) {
-      let norm = new Vector(Math.random() * 2 - 1, Math.random() * 2 - 1).mul(0.006);
-      this.dynent.vel = Vector.add(norm, dir);
-      this.lifetime = 10000;
-      this.omega = (Math.random() * 2 - 1) * 0.03;
-      this.id = (Math.random() * 8) | 0;
     }
   }
 
   update() {
-    let dt = Date.now() - this.last_update;
-    this.last_update = Date.now();
-
     let delta = Date.now() - this.time;
     if (delta > this.lifetime) {
       if (this.type & Particle.BLOOD) {
@@ -67,50 +57,6 @@ class Particle {
         );
       }
       return false;
-    }
-    if (this.type & Particle.GIB) {
-      this.dynent.update(dt);
-      this.dynent.angle += this.omega * dt;
-
-      this.dynent.vel.mul(0.98);
-      this.omega *= 0.98;
-
-      //collide map
-      let level = state.gameClient.getLevelRender().getLevel();
-      let norm = new Vector(0, 0);
-      let tile = level.getNorm(norm, this.dynent.pos);
-      if (tile > 128) {
-        norm.normalize();
-        let dot = norm.dot(this.dynent.vel);
-        if (dot > 0) {
-          let reflect = norm.mul(2 * dot);
-          this.dynent.vel.sub(reflect);
-          this.omega *= -1;
-        }
-      }
-      //collide lava
-      let my_pos = this.dynent.pos;
-      if (level.collideLava(my_pos)) {
-        let bridge = level.getCollideBridges(my_pos);
-        if (bridge === null) {
-          Particle.create(Particle.SPLASH_LAVA_SMALL, this.dynent.pos, null, 1);
-          return false;
-        }
-      }
-
-      if (this.old_gib_pos === undefined) this.old_gib_pos = new Vector(this.dynent.pos);
-      let length = Vector.sub(my_pos, this.old_gib_pos).length2();
-      if (length > 0.4 * 0.4) {
-        let alpha = 1 - delta / this.lifetime;
-        if (alpha < 0) alpha = 0;
-        let rnd = this.rnd * 0.2;
-        let color =
-          this.type === Particle.GIB_RED
-            ? [0.5 + rnd, 0, 0, alpha * 0.5 + rnd]
-            : [0, 0.5 + rnd, 0, alpha * 0.5 + rnd];
-        state.Decal.render_decal(this.dynent, Particle.tex_blood, color);
-        this.old_gib_pos.copy(this.dynent.pos);
-      }
     }
     return true;
   }
@@ -128,19 +74,6 @@ class Particle {
       this.dynent.render(camera, Particle.tex_explode, Particle.shader_explode, {
         vectors: [{ location: Particle.shader_explode.dtc, vec: [sx + dx, sy - 0.25, koef, 0] }],
       });
-    } else if (this.type === Particle.SMOKE) {
-      let alpha = (time - this.time) / this.lifetime;
-      Dynent.render(
-        camera,
-        Particle.tex_smoke,
-        Particle.shader_smoke,
-        this.dynent.pos,
-        [0.5 + alpha, 0.5 + alpha],
-        this.dynent.angle,
-        {
-          vectors: [{ location: Particle.shader_smoke.color, vec: [0, 0, 0, 1.5 - 1.5 * alpha] }],
-        },
-      );
     } else if (this.type === Particle.RESPAWN) {
       let kadr = (((time - this.time) * 16) / this.lifetime) | 0;
       if (kadr > 16 - 1) kadr = 16 - 1;
@@ -195,19 +128,6 @@ class Particle {
       if (this.type & (Particle.SPLASH_LAVA | Particle.SPLASH_LAVA_SMALL)) {
         state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
       }
-    } else if (this.type & Particle.GIB) {
-      let sx = ((this.id % 4) | 0) * 0.25;
-      let sy = ((this.id / 4) | 0) * 0.25;
-      if (this.type === Particle.GIB_RED) sy += 0.5;
-      let d = 10 - (10 * (time - this.time)) / this.lifetime;
-      if (d > 1) d = 1;
-
-      this.dynent.render(camera, Particle.tex_gibs, Particle.shader_gib, {
-        vectors: [
-          { location: Particle.shader_gib.dtc, vec: [sx, sy, 0, 0] },
-          { location: Particle.shader_gib.color, vec: [1, 1, 1, d] },
-        ],
-      });
     }
   }
 }
@@ -226,14 +146,7 @@ Event.on('cl_botpain', function (pos, dir, id) {
 });
 
 Event.on('cl_botdead', function (pos, dir, id) {
-  let count_gibs = parseInt(Console.variable('gibs-count', 'count of gibs in dead bot', 10));
-  Particle.create(
-    state.Bot.isMutant(id) ? Particle.GIB_GREEN : Particle.GIB_RED,
-    pos,
-    dir,
-    count_gibs,
-  );
-  //blood
+  // В 3D-режиме гибы не рисуются (имеется MD2-труп с фейдом), оставляем только лужу крови.
   let type = state.Bot.isMutant(id) ? Particle.BLOOD_DEAD_GREEN : Particle.BLOOD_DEAD_RED;
 
   let level = state.gameClient.getLevelRender().getLevel();
@@ -278,6 +191,8 @@ Event.on('cl_bulletdead', function (bullet) {
       state.Decal.render_decal(
         {
           pos: bullet.dynent.pos,
+          pos_z: bullet.z,
+          dir: bullet.dynent && bullet.dynent.vel ? bullet.dynent.vel : null,
           angle: Math.random() * Math.PI * 2,
           size: isQuad ? new Vector(1.5, 1.5) : new Vector(1, 1),
         },
@@ -291,6 +206,8 @@ Event.on('cl_bulletdead', function (bullet) {
     state.Decal.render_decal(
       {
         pos: bullet.dynent.pos,
+        pos_z: bullet.z,
+        dir: bullet.dynent && bullet.dynent.vel ? bullet.dynent.vel : null,
         angle: Math.random() * Math.PI * 2,
         size: new Vector(3, 3),
       },
@@ -306,9 +223,7 @@ Event.on('cl_bulletdead', function (bullet) {
 Particle.ready = function () {
   return (
     Particle.tex_explode.ready() &&
-    Particle.tex_smoke.ready() &&
     Particle.tex_respawn.ready() &&
-    Particle.tex_gibs.ready() &&
     Particle.tex_blood.ready()
   );
 };
@@ -405,40 +320,30 @@ Particle.load = function () {
   Particle.spark_textures = create_spark();
   Particle.splash_textures = create_splash();
 
-  //type
-  Particle.EXPLODE_ROCKET = 1;
-  Particle.EXPLODE_PLASMA = 2;
+  //type — биты выбраны так, чтобы группы (BLOOD/SPLASH/EXPLODE) объединялись через `|`.
+  Particle.EXPLODE_ROCKET      = 1;
+  Particle.EXPLODE_PLASMA      = 2;
   Particle.EXPLODE_PLASMA_QUAD = 4096 * 2;
-  Particle.EXPLODE =
-    Particle.EXPLODE_ROCKET | Particle.EXPLODE_PLASMA | Particle.EXPLODE_PLASMA_QUAD;
-  Particle.SMOKE = 4;
-  Particle.RESPAWN = 8;
-  Particle.BLOOD_RED = 16;
-  Particle.BLOOD_GREEN = 32;
-  Particle.BLOOD = Particle.BLOOD_RED | Particle.BLOOD_GREEN;
-  Particle.BLOOD_DEAD_RED = 64;
-  Particle.BLOOD_DEAD_GREEN = 128;
-  Particle.SPLASH_LAVA = 256;
-  Particle.SPLASH_LAVA_SMALL = 512;
-  Particle.SPLASH =
-    Particle.BLOOD_DEAD_RED |
-    Particle.BLOOD_DEAD_GREEN |
-    Particle.SPLASH_LAVA |
-    Particle.SPLASH_LAVA_SMALL;
-  Particle.GIB_RED = 1024;
-  Particle.GIB_GREEN = 2048;
-  Particle.GIB = Particle.GIB_RED | Particle.GIB_GREEN;
-  Particle.SPARK = 4096;
+  Particle.EXPLODE             = Particle.EXPLODE_ROCKET | Particle.EXPLODE_PLASMA | Particle.EXPLODE_PLASMA_QUAD;
+  Particle.RESPAWN             = 8;
+  Particle.BLOOD_RED           = 16;
+  Particle.BLOOD_GREEN         = 32;
+  Particle.BLOOD               = Particle.BLOOD_RED | Particle.BLOOD_GREEN;
+  Particle.BLOOD_DEAD_RED      = 64;
+  Particle.BLOOD_DEAD_GREEN    = 128;
+  Particle.SPLASH_LAVA         = 256;
+  Particle.SPLASH_LAVA_SMALL   = 512;
+  Particle.SPLASH              = Particle.BLOOD_DEAD_RED | Particle.BLOOD_DEAD_GREEN
+                               | Particle.SPLASH_LAVA | Particle.SPLASH_LAVA_SMALL;
+  Particle.SPARK               = 4096;
 
-  Particle.PARTICLE_LAYER_0 = Particle.GIB | Particle.SPARK;
+  Particle.PARTICLE_LAYER_0 = Particle.SPARK;
   Particle.PARTICLE_LAYER_1 = Particle.RESPAWN | Particle.BLOOD | Particle.SPLASH;
-  Particle.PARTICLE_LAYER_2 = Particle.EXPLODE | Particle.SMOKE;
+  Particle.PARTICLE_LAYER_2 = Particle.EXPLODE;
 
   Particle.tex_explode = new Texture('/game/textures/fx/particles/explode.png');
-  Particle.tex_smoke = new Texture('/game/textures/fx/particles/smoke.png');
   Particle.tex_respawn = new Texture('/game/textures/fx/particles/respawn.png');
-  Particle.tex_gibs = new Texture('/game/textures/fx/particles/gibs.png');
-  Particle.tex_blood = new Texture('/game/textures/fx/particles/blood.png');
+  Particle.tex_blood   = new Texture('/game/textures/fx/particles/blood.png');
 
   Particle.particles = [];
 
@@ -483,26 +388,6 @@ Particle.load = function () {
         gl_FragColor = mix(col, col.grba * 2.0, koef.r);\n\
     }\n';
 
-  let frag_smoke =
-    '\n\
-    #ifdef GL_ES\n\
-    // define default precision for float, vec, mat.\n\
-    precision highp float;\n\
-    #endif\n\
-    \n\
-    uniform sampler2D tex;\n\
-    uniform sampler2D tex_visible;\n\
-    uniform vec4 color;\n\
-    varying vec4 texcoord;\n\
-    \n\
-    void main()\n\
-    {\n\
-        vec4 col = texture2D(tex, texcoord.xy);\n\
-        vec4 visible = texture2D(tex_visible, texcoord.zw);\n\
-        col *= 1.0 - visible.r;\n\
-        gl_FragColor = vec4(col.rgb, col.r * color.a);\n\
-    }\n';
-
   let frag_blood =
     '\n\
     #ifdef GL_ES\n\
@@ -525,55 +410,12 @@ Particle.load = function () {
         gl_FragColor = col * color;\n\
     }\n';
 
-  let frag_color =
-    '\n\
-    #ifdef GL_ES\n\
-    // define default precision for float, vec, mat.\n\
-    precision highp float;\n\
-    #endif\n\
-    \n\
-    uniform sampler2D tex;\n\
-    uniform sampler2D tex_visible;\n\
-    uniform vec4 color;\n\
-    varying vec4 texcoord;\n\
-    \n\
-    void main()\n\
-    {\n\
-        vec4 col = texture2D(tex, texcoord.xy);\n\
-        vec4 visible = texture2D(tex_visible, texcoord.zw);\n\
-        float shadow = clamp((1.0 - visible.g) * 6.0 - 3.0, 0.5, 1.0);\n\
-        col *= (1.0 - visible.r) * color;\n\
-        gl_FragColor = col;\n\
-    }\n';
-
-  Particle.shader_explode = new Shader(vert_explode, frag_explode, [
-    'mat_pos',
-    'dtc',
-    'tex',
-    'tex_visible',
-  ]);
-  Particle.shader_smoke = new Shader(vert, frag_smoke, ['mat_pos', 'tex', 'tex_visible', 'color']);
-  Particle.shader_respawn = new Shader(vert_explode, state.Weapon.frag_noshadow_color, [
-    'mat_pos',
-    'dtc',
-    'tex',
-    'tex_visible',
-    'color',
-  ]);
-  Particle.shader_blood = new Shader(vert, frag_blood, [
-    'mat_pos',
-    'tex',
-    'tex_visible',
-    'color',
-    'koef',
-  ]);
-  Particle.shader_gib = new Shader(vert_explode, frag_color, [
-    'mat_pos',
-    'dtc',
-    'tex',
-    'tex_visible',
-    'color',
-  ]);
+  Particle.shader_explode = new Shader(vert_explode, frag_explode,
+    ['mat_pos', 'dtc', 'tex', 'tex_visible']);
+  Particle.shader_respawn = new Shader(vert_explode, state.Weapon.frag_noshadow_color,
+    ['mat_pos', 'dtc', 'tex', 'tex_visible', 'color']);
+  Particle.shader_blood = new Shader(vert, frag_blood,
+    ['mat_pos', 'tex', 'tex_visible', 'color', 'koef']);
 };
 
 //dir - Vector

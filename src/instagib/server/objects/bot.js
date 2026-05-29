@@ -20,6 +20,7 @@ class Bot {
     this.key_down = false;
     this.key_right = false;
     this.shoot = false;
+    this.pitch = 0;
 
     this.alive = false;
     this.resp_time = 0;
@@ -44,7 +45,7 @@ class Bot {
     this.powertime = 0;
     this.shield = false;
     this.last_shoot_time = 0;
-    this.speed = Bot.SPEED;
+    this.speed = this.ai ? Bot.AI_SPEED : Bot.SPEED;
     this.last_update = Date.now();
 
     Event.emit('botrespawn', this);
@@ -179,6 +180,7 @@ param.lava
 }
 
 Bot.SPEED = 0.008;
+Bot.AI_SPEED = 0.0058;
 Bot.HEALTH = 3999;
 
 Event.on('takehealth', function (bot) {
@@ -191,10 +193,11 @@ Event.on('takeshield', function (bot) {
 
 Event.on('takepower', function (bot, type) {
   bot.power = type;
+  const base = bot.ai ? Bot.AI_SPEED : Bot.SPEED;
   if (type === ITEM.SPEED) {
-    bot.speed = Bot.SPEED * 1.5;
+    bot.speed = base * 1.5;
   } else {
-    bot.speed = Bot.SPEED;
+    bot.speed = base;
   }
 });
 

@@ -23,22 +23,10 @@ constructor(port, my_ip)
     let self = this;
     this.binaryType = "unknown";
 
-    this.onmessage = function(e)
-    {
-        Console.assert("Please override onmessage callback");
-    };
-    this.onopen = function()
-    {
-        Console.assert("Please override onopen callback");
-    };
-    this.onclose = function(e)
-    {
-        Console.assert("Please override onclose callback");
-    };
-    this.onerror = function(e)
-    {
-        Console.assert("Please override onerror callback");
-    };
+    this.onmessage = function(_e) { Console.assert("Please override onmessage callback"); };
+    this.onopen    = function()   { Console.assert("Please override onopen callback");    };
+    this.onclose   = function(_e) { Console.assert("Please override onclose callback");   };
+    this.onerror   = function(_e) { Console.assert("Please override onerror callback");   };
     this.send = function(data)
     {
         fakeSend("fakeclientsend" + port, { data: data, ip: my_ip });
@@ -90,7 +78,7 @@ FakeServer.Server = function(param)
         {
             events[event_name + ip] = { callback : callback };
         };
-        this.send = function(data, param)
+        this.send = function(data, _param)
         {
             fakeSend("fakeserversend" + ip, { data : data });
         };

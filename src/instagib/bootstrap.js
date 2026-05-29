@@ -39,8 +39,6 @@ import './client/bot.js';
 import './client/item.js';
 import './client/hud.js';
 import './client/decal.js';
-import './client/bridges.js';
 import './client/level.js';
-import './client/debug.js';
 import './client/fakesocket.js';
 import './client/game.js';

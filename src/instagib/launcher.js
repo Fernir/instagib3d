@@ -17,7 +17,7 @@ function getParams() {
 
 export async function startGame(canvas) {
   if (runtime) runtime.destroy();
-  runtime = await createInstagibRuntime(canvas, { sens: 0.1, highQuality: true });
+  runtime = await createInstagibRuntime(canvas, { sens: 0.1 });
   runtime.start(getParams());
   return runtime;
 }

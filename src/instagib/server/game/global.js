@@ -14,19 +14,19 @@ export const WEAPON =
 
     wea_tabl :
     [
-        { vel: 0,     period: 100,  lifetime: 200, radius: 0,   damage: 300,  patrons: 1,    name: "Pistol", },
-        { vel: 0,     period: 0,    lifetime: 0,   radius: 0,   damage: 3,    patrons: 7000, name: "Shaft", },
-        { vel: 0,     period: 1000, lifetime: 500, radius: 0,   damage: 4000, patrons: 5,    name: "Rail", },
-        { vel: 0.02,  period: 100,  lifetime: 600, radius: 0.3, damage: 800,  patrons: 50,   name: "Plasma", },
-        { vel: 0.03,  period: 750,  lifetime: 400, radius: 0.3, damage: 500,  patrons: 10,   name: "Zenit", },
-        { vel: 0.015, period: 750,  lifetime: 800, radius: 0.3, damage: 6000, patrons: 10,   name: "Rockets", },
+        { vel: 0.025, period: 500,  lifetime: 1200, radius: 0.18, damage: 600,  patrons: 1,    name: "Blaster", },
+        { vel: 0,     period: 50,   lifetime: 0,    radius: 0,    damage: 3,    patrons: 7000, name: "Shaft", },
+        { vel: 0,     period: 1500, lifetime: 500,  radius: 0,    damage: 4000, patrons: 5,    name: "Rail", },
+        { vel: 0.02,  period: 100,  lifetime: 600,  radius: 0.3,  damage: 800,  patrons: 50,   name: "Plasma", },
+        { vel: 0.03,  period: 1000, lifetime: 400,  radius: 0.3,  damage: 500,  patrons: 10,   name: "Zenit", },
+        { vel: 0.015, period: 800,  lifetime: 800,  radius: 0.3,  damage: 6000, patrons: 10,   name: "Rockets", },
 
-        {             period: 100,                 radius: 0,   damage: 600,  },
-        {             period: 0,                   radius: 0,   damage: 6,    },
-        {             period: 500,                 radius: 0,   damage: 4000, },
-        {             period: 100,                 radius: 0.6, damage: 1600, },
-        {             period: 750,                 radius: 0.3, damage: 500,  },
-        {             period: 375,                 radius: 0.3, damage: 6000, },
+        {             period: 250,                  radius: 0.18, damage: 1200, },
+        {             period: 50,                   radius: 0,    damage: 6,    },
+        {             period: 750,                  radius: 0,    damage: 4000, },
+        {             period: 50,                   radius: 0.6,  damage: 1600, },
+        {             period: 500,                  radius: 0.3,  damage: 500,  },
+        {             period: 400,                  radius: 0.3,  damage: 6000, },
     ],
 };
 

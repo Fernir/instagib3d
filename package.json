@@ -1,7 +1,7 @@
 {
-  "name": "tanks",
+  "name": "instagib3d",
   "version": "1.0.0",
-  "description": "forecast test",
+  "description": "Enhanced 3D version of schibir/instagib.io with id-Software/Quake-2 models and FX",
   "type": "module",
   "private": true,
   "scripts": {
@@ -12,7 +12,7 @@
     "format": "prettier . --write"
   },
   "author": "Nikolay Alekseev",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "gl-matrix": "^2.8.1",
     "howler": "^2.2.4"

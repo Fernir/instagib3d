@@ -42,33 +42,46 @@ class Weapon {
         return;
       }
 
-      let Y = 0.9;
+      // Положение дула в системе координат камеры (right/down/forward).
+      // Совпадает с тем, как видит ствол первый-лицо рендер во вьюпорте.
+      const MUZZLE_RIGHT   = 0.25;
+      const MUZZLE_DOWN    = 0.35;
+      const MUZZLE_FORWARD = 0.9;
+      const SHOOTER_EYE_Z  = 1.4;
+
       let angle = this.owner.dynent.angle;
       if (this.type === WEAPON.PISTOL) {
         angle += ((Math.random() * 2 - 1) * Math.PI) / 100;
       }
 
-      let sina = Math.sin(angle);
-      let cosa = Math.cos(angle);
-      let position = Vector.add2(
-        this.owner.dynent.pos,
-        cosa * 0.25 - sina * Y,
-        -cosa * Y - sina * 0.25,
-      );
+      const pitch = this.owner.pitch || 0;
+      const sina = Math.sin(angle), cosa = Math.cos(angle);
+      const sinp = Math.sin(pitch), cosp = Math.cos(pitch);
+
+      // right   = ( cosa,        -sina,      0)
+      // up      = ( sina*sinp,    cosa*sinp, cosp)
+      // forward = (-sina*cosp,   -cosa*cosp, sinp)
+      // muzzle = camera + right*R + up*(-D) + forward*F
+      const dx = cosa * MUZZLE_RIGHT - sina * sinp * MUZZLE_DOWN - sina * cosp * MUZZLE_FORWARD;
+      const dy = -sina * MUZZLE_RIGHT - cosa * sinp * MUZZLE_DOWN - cosa * cosp * MUZZLE_FORWARD;
+      const dz = -cosp * MUZZLE_DOWN + sinp * MUZZLE_FORWARD;
+
+      const position = Vector.add2(this.owner.dynent.pos, dx, dy);
+      const muzzleZ = SHOOTER_EYE_Z + dz;
 
       //for collision
       let center = Vector.add(position, this.owner.dynent.pos).mul(0.5);
       if (this.owner.game.level.getCollide(center) > 128) return;
 
       Event.emit('shoot', this.owner, this.type);
-      if (this.type >= WEAPON.PLASMA) {
-        let bul = new Bullet(this.type, position, angle, this.owner);
+      if (this.type === WEAPON.PISTOL || this.type >= WEAPON.PLASMA) {
+        let bul = new Bullet(this.type, position, angle, this.owner, pitch, muzzleZ);
         bul.ai_check = true;
         bul.id = this.owner.game.getBulletId();
         this.owner.game.bullets.push(bul);
         Event.emit('bulletrespawn', bul, true);
       } else {
-        new Bullet(this.type, position, angle, this.owner);
+        new Bullet(this.type, position, angle, this.owner, pitch, muzzleZ);
       }
       if (this.type !== WEAPON.SHAFT) {
         if (this.type !== WEAPON.PISTOL) this.patrons[this.type]--;
@@ -81,7 +94,7 @@ class Weapon {
         let count = power ? 19 : 9;
         for (let i = 0; i < count; i++) {
           let my_angle = angle + ((Math.random() * 2 - 1) * Math.PI) / 15;
-          let bul = new Bullet(this.type, position, my_angle, this.owner);
+          let bul = new Bullet(this.type, position, my_angle, this.owner, pitch, muzzleZ);
           bul.ai_check = false;
           bul.id = this.owner.game.getBulletId();
           this.owner.game.bullets.push(bul);

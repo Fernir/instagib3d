@@ -7,6 +7,14 @@ import { itemForEach } from '../objects/item.js';
 
 import { ITEM, WEAPON } from './global.js';
 
+// Высота «глаз» стрелка и зоны прицеливания (согласованы с bullet.js hitZ).
+const SHOOTER_EYE_Z = 1.4;
+const AIM_Z_HEAD = 1.78;
+const AIM_Z_CHEST = 1.25;
+const AIM_Z_STOMACH = 0.95;
+const AIM_Z_LEGS = 0.42;
+const PITCH_LIMIT = Math.PI * 0.45;
+
 class Forbidden {
   constructor(max_count) {
     this.max_count = max_count;
@@ -31,16 +39,23 @@ class Forbidden {
 class Aibot {
   constructor(owner) {
     this.owner = owner;
-    this.reaction_time = 200 + ((Math.random() * 300) | 0);
-    this.angle_speed = 1 + Math.random();
-    this.max_angle_speed = 1 + Math.random();
+    // Реакция, поворот, точность — сделали ботов «человечнее»: реагируют дольше,
+    // поворачиваются плавнее, стреляют реже.
+    this.reaction_time = 350 + ((Math.random() * 450) | 0);
+    this.angle_speed = 0.5 + Math.random() * 0.8;
+    this.max_angle_speed = 0.5 + Math.random() * 0.8;
     this.accuracy = Math.random() * Math.random();
+    // AI-кулдаун между выстрелами (помимо period оружия). Конкретный интервал
+    // задаётся при каждом выстреле в STATE_HEAD_BOT.
+    this.next_ai_shoot = 0;
     if (owner.nick === 'lyaguha') {
-      this.reaction_time = 200;
-      this.angle_speed = 2;
-      this.max_angle_speed = 2;
+      this.reaction_time = 300;
+      this.angle_speed = 1.2;
+      this.max_angle_speed = 1.2;
       this.accuracy = 1;
     }
+    this.aim_z = AIM_Z_CHEST;
+    this.aim_z_until = 0;
   }
 
   update(dt) {
@@ -77,6 +92,63 @@ class Aibot {
       if (update_angle > self.max_angle_speed / 20) update_angle = self.max_angle_speed / 20;
       if (update_angle < -self.max_angle_speed / 20) update_angle = -self.max_angle_speed / 20;
       self.owner.dynent.angle = normalizeAngle(self.owner.dynent.angle + (update_angle * dt) / 16);
+      return delta;
+    }
+    function pickAimZone(self)
+    {
+      const now = Date.now();
+      if (now < self.aim_z_until) return self.aim_z;
+
+      // Веса: чаще целятся в голову/грудь, иногда — в ноги/живот.
+      const roll = Math.random();
+      let z;
+      if (roll < 0.32) z = AIM_Z_HEAD;
+      else if (roll < 0.62) z = AIM_Z_CHEST;
+      else if (roll < 0.82) z = AIM_Z_STOMACH;
+      else z = AIM_Z_LEGS;
+
+      self.aim_z = z;
+      self.aim_z_until = now + 700 + ((Math.random() * 1300) | 0);
+      return z;
+    }
+    function aimPitchTo(self, target2d, aimZ, koef)
+    {
+      const horiz = Vector.sub(target2d, self.owner.dynent.pos).length();
+      if (horiz < 0.05)
+      {
+        self.owner.pitch = 0;
+        return;
+      }
+
+      let targetPitch = Math.atan2(aimZ - SHOOTER_EYE_Z, horiz);
+      const spread = (1 - self.accuracy) * 0.14;
+      targetPitch += (Math.random() * 2 - 1) * spread;
+      targetPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, targetPitch));
+
+      koef = koef || self.angle_speed;
+      let delta = targetPitch - (self.owner.pitch || 0);
+      let updatePitch = delta * (koef / 20);
+      const maxStep = self.max_angle_speed / 20;
+      if (updatePitch > maxStep) updatePitch = maxStep;
+      if (updatePitch < -maxStep) updatePitch = -maxStep;
+      self.owner.pitch = (self.owner.pitch || 0) + (updatePitch * dt) / 16;
+    }
+    function decayPitch(self)
+    {
+      const p = self.owner.pitch || 0;
+      if (Math.abs(p) < 0.002)
+      {
+        self.owner.pitch = 0;
+        return;
+      }
+      const step = (self.max_angle_speed / 20) * (dt / 16);
+      if (p > 0) self.owner.pitch = Math.max(0, p - step);
+      else self.owner.pitch = Math.min(0, p + step);
+    }
+    function aimAt(self, target2d, aimZ, koef)
+    {
+      const delta = angleTo(self, target2d, koef);
+      aimPitchTo(self, target2d, aimZ, koef);
       return delta;
     }
     function findItem(self) {
@@ -457,29 +529,30 @@ class Aibot {
     this.owner.shoot = false;
     switch (this.state_head) {
       case Aibot.STATE_HEAD_STAY:
+        decayPitch(this);
         break;
       case Aibot.STATE_HEAD_FRONT: {
         let pos = Vector.add(this.owner.dynent.pos, this.owner.direction);
-        angleTo(this, pos, 0.75);
+        aimAt(this, pos, AIM_Z_CHEST, 0.75);
         break;
       }
       case Aibot.STATE_HEAD_WAYPOINT: {
         let pos = this.waypoint_next ? this.waypoint_next.pos : this.waypoint_master.pos;
-        angleTo(this, pos);
+        aimAt(this, pos, AIM_Z_CHEST);
         break;
       }
       case Aibot.STATE_HEAD_SMOOTH_WAYPOINT: {
         let pos = this.waypoint_next ? this.waypoint_next.pos : this.waypoint_master.pos;
-        let delta = angleTo(this, pos, 0.75);
+        let delta = aimAt(this, pos, AIM_Z_CHEST, 0.75);
         if (Math.abs(delta) < Math.PI / 6) this.state_head = Aibot.STATE_HEAD_WAYPOINT;
         break;
       }
       case Aibot.STATE_HEAD_POINT: {
-        angleTo(this, this.point_head, 0.75);
+        aimAt(this, this.point_head, AIM_Z_HEAD, 0.75);
         break;
       }
       case Aibot.STATE_HEAD_SHOOTED: {
-        let delta = angleTo(this, this.point_head);
+        let delta = aimAt(this, this.point_head, AIM_Z_HEAD);
         if (Math.abs(delta) < Math.PI / 12) {
           if (this.waypoint_next || this.waypoint_master)
             this.state_head = Aibot.STATE_HEAD_SMOOTH_WAYPOINT;
@@ -507,7 +580,8 @@ class Aibot {
           if (AI.isVisible(new_bot_pos, bot_pos, 1.5)) bot_pos = new_bot_pos;
         }
 
-        let delta_angle = angleTo(this, bot_pos, this.angle_speed * 3);
+        const aimZ = pickAimZone(this);
+        let delta_angle = aimAt(this, bot_pos, aimZ, this.angle_speed * 3);
         let need_shoot = false;
         if (this.owner.weapon.type === WEAPON.SHAFT) {
           need_shoot = delta_angle > -0.32 && delta_angle < 0.22;
@@ -541,9 +615,46 @@ class Aibot {
         }
 
         if (need_shoot) {
-          this.owner.shoot = AI.botVisible(this.owner.dynent.pos, [bot_pos.x, bot_pos.y]);
+          // Дополнительная AI-задержка между выстрелами — чтобы боты стреляли
+          // не так часто, как только что прицелились. Зависит от accuracy:
+          // высокая точность → короче пауза, низкая → дольше.
+          const now = Date.now();
+          if (now >= this.next_ai_shoot) {
+            this.owner.shoot = AI.botVisible(this.owner.dynent.pos, [bot_pos.x, bot_pos.y]);
+            if (this.owner.shoot) {
+              const base = 380;
+              const variance = 360 + (1 - this.accuracy) * 320;
+              this.next_ai_shoot = now + base + Math.random() * variance;
+            }
+          } else {
+            this.owner.shoot = false;
+          }
         }
         break;
+      }
+    }
+
+    // ── СТОП-НА-ВЫСТРЕЛ ─────────────────────────────────────────────────
+    // Как в Quake 2 (cl_pmove/anim): пока проигрывается анимация выстрела,
+    // бот замирает на месте и не бежит. На каждый «жмак» курка обновляем
+    // окно заморозки на длительность attack-анимации, и в этом окне
+    // принудительно гасим клавиши движения, какими бы их ни выставил
+    // предыдущий шаг (move-state, стрейф во время атаки).
+    {
+      const now = Date.now();
+      if (this.owner.shoot) {
+        // ~8 кадров anim.fps=15 ≈ 530 мс; для медленных пушек берём
+        // длительность их «outlay» из таблицы, но не больше 600 мс,
+        // чтобы бот не превращался в неподвижную мишень.
+        const lifetime = WEAPON.wea_tabl[this.owner.weapon.type].lifetime || 0;
+        const hold = Math.min(600, Math.max(400, lifetime));
+        this.shoot_freeze_until = now + hold;
+      }
+      if (this.shoot_freeze_until && now < this.shoot_freeze_until) {
+        this.owner.key_up = false;
+        this.owner.key_down = false;
+        this.owner.key_left = false;
+        this.owner.key_right = false;
       }
     }
   }
@@ -560,6 +671,7 @@ Event.on('botrespawn', function (bot) {
     bot.ai.bot_last_visible_time = 0;
     bot.ai.shooted_bot = null;
     bot.ai.danger_pos = null;
+    bot.ai.shoot_freeze_until = 0;
     bot.ai.point = null;
     bot.ai.bot_point = null;
     bot.ai.waypoint_master = null;
@@ -568,6 +680,9 @@ Event.on('botrespawn', function (bot) {
     bot.ai.forbidden = null;
     bot.ai.attack_time = 0;
     bot.ai.attack_point = null;
+    bot.ai.aim_z = AIM_Z_CHEST;
+    bot.ai.aim_z_until = 0;
+    bot.pitch = 0;
   }
 });
 

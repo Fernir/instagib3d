@@ -74,6 +74,9 @@ class Shader
         this.getLocation = function (name) {
             return state.gl.getUniformLocation(prog, name);
         };
+        this.attrib = function (name) {
+            return state.gl.getAttribLocation(prog, name);
+        };
     }
 }
 

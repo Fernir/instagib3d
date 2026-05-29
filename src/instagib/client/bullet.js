@@ -6,14 +6,20 @@ import { Vector } from '../server/libs/vector.js';
 import { Dynent } from '../server/objects/dynent.js';
 
 class BulletClient {
-  constructor(type, pos, angle, power, id) {
+  constructor(type, pos, angle, power, id, pitch = 0, z) {
     this.type = type;
     this.power = power;
     this.id = id;
+    this.pitch = pitch;
     this.dynent = new Dynent(pos, [1, 1], angle);
 
     const norm_dir = new Vector(-Math.sin(angle), -Math.cos(angle));
-    this.dynent.vel = Vector.mul(norm_dir, WEAPON.wea_tabl[type].vel);
+    const cos_p = Math.cos(pitch);
+    const sin_p = Math.sin(pitch);
+    const speed = WEAPON.wea_tabl[type].vel;
+    this.dynent.vel = Vector.mul(norm_dir, speed * cos_p);
+    this.vz = speed * sin_p;
+    this.z = z !== undefined ? z : 1.4;
 
     this.dead = Date.now() + WEAPON.wea_tabl[type].lifetime;
     this.last_update = Date.now();
@@ -26,8 +32,13 @@ class BulletClient {
 
     if (now > this.dead) return false;
 
-    if (this.type >= WEAPON.PLASMA) {
+    if (this.type === WEAPON.PISTOL || this.type >= WEAPON.PLASMA) {
       this.dynent.update(delta);
+      this.z += this.vz * delta;
+
+      // Те же 3D-границы, что и на сервере: чтобы клиент не «таскал» снаряд
+      // в небо — иначе следующий BULLET_DEAD будет в нелепой точке Z.
+      if (this.z < 0 || this.z > 4.0) return false;
 
       const level = state.gameClient.getLevelRender().getLevel();
       if (this.type === WEAPON.ZENIT) {
@@ -47,13 +58,21 @@ class BulletClient {
       }
 
       if (this.type === WEAPON.ROCKET) {
-        state.Particle.create(state.Particle.SMOKE, this.dynent.pos, null, 1);
+        if (state.Q2FX) state.Q2FX.rocketTrail(this.dynent.pos, this.z);
+      } else if (this.type === WEAPON.PLASMA && state.Q2FX) {
+        state.Q2FX.plasmaTrail(this.dynent.pos, this.power === ITEM.QUAD, this.z);
+      } else if (this.type === WEAPON.ZENIT && state.Q2FX) {
+        state.Q2FX.zenitTrail(this.dynent.pos, this.z);
+      } else if (this.type === WEAPON.PISTOL && state.Q2FX && state.Q2FX.blasterTrail) {
+        state.Q2FX.blasterTrail(this.dynent.pos, this.power === ITEM.QUAD, this.z);
       }
     }
     return true;
   }
 
   render(camera) {
+    if (state.Q2FX && state.Q2FX.projectileGlow(camera, this)) return;
+
     if (this.type === WEAPON.ZENIT) {
       let alpha = (this.dead - Date.now()) / 250;
       if (alpha > 1) alpha = 1;
@@ -90,9 +109,11 @@ class BulletClient {
 }
 
 class BulletLine {
-  constructor(type, pos, angle, power, size_y, dest) {
+  constructor(type, pos, angle, power, size_y, dest, pitch = 0, dest_z = 1.4) {
     this.type = type;
     this.power = power;
+    this.pitch = pitch;
+    this.dest_z = dest_z;
     this.dynent = new Dynent(pos, [0.5, size_y], angle);
     this.dest = dest;
 
@@ -105,65 +126,9 @@ class BulletLine {
     return Date.now() < this.dead;
   }
 
-  render(camera) {
-    const renderState = { vectors: [] };
-    const timeleft = (this.dead - Date.now()) / WEAPON.wea_tabl[this.type].period;
-
-    if (this.type === WEAPON.PISTOL) {
-      const color = this.power === ITEM.QUAD ? [1, 0.8, 0.6, timeleft] : [1, 1, 1, timeleft];
-      renderState.vectors.push({
-        location: state.Weapon.shader_noshadow_color.color,
-        vec: color,
-      });
-      this.dynent.render(
-        camera,
-        state.Weapon.skins[this.type].bullet,
-        state.Weapon.shader_noshadow_color,
-        renderState,
-      );
-    } else if (this.type === WEAPON.RAIL) {
-      const gl = state.gl;
-      const mat4 = state.mat4;
-      gl.blendFunc(gl.ONE, gl.ONE);
-
-      const mat_tex = mat4.create();
-      mat4.trans(mat_tex, [0.5, 0.5]);
-      mat4.scal(mat_tex, [0.5, 0.5 * this.dynent.size.y]);
-
-      renderState.vectors.push({
-        location: state.Weapon.shader_noshadow_color_tex.color,
-        vec: [timeleft * 5, timeleft * 2.5, timeleft * 2.5, timeleft],
-      });
-      renderState.mat_tex = mat_tex;
-
-      this.dynent.render(
-        camera,
-        state.Weapon.skins[this.type].bullet,
-        state.Weapon.shader_noshadow_color_tex,
-        renderState,
-      );
-
-      mat4.identity(mat_tex);
-      mat4.trans(mat_tex, [0.5, 0.5]);
-      mat4.scal(mat_tex, [0.5, 0.5]);
-
-      const level = state.gameClient.getLevelRender().getLevel();
-      if (level.collideLava(this.dest) && !level.getCollideBridges(this.dest)) {
-        state.Particle.create(state.Particle.SPLASH_LAVA_SMALL, this.dest, null, 1);
-      } else {
-        Dynent.render(
-          camera,
-          state.Weapon.skins[this.type].fire,
-          state.Weapon.shader_noshadow_color_tex,
-          this.dest,
-          [0.5, 0.5],
-          0,
-          renderState,
-        );
-      }
-
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    }
+  render() {
+    // В 3D режиме хитсканы рисуются как лазерный луч в Q2FX и динамические лайты;
+    // BulletLine остаётся «логическим» снарядом без собственного спрайта.
   }
 }
 
@@ -241,62 +206,21 @@ class BulletShaft {
     return !this.del;
   }
 
-  render(camera) {
-    const renderState = { vectors: [] };
-    const gl = state.gl;
-    const mat4 = state.mat4;
-    gl.blendFunc(gl.ONE, gl.ONE);
-
-    const mat_tex = mat4.create();
-    mat4.trans(mat_tex, [0.5, 0.5]);
-    mat4.scal(mat_tex, [0.5, 0.5]);
-    const color = this.power === ITEM.QUAD ? [1.5, 0.7, 0.7, 0] : [0.7, 0.7, 1.5, 0];
-    renderState.vectors.push({
-      location: state.Weapon.shader_noshadow_color_tex.color,
-      vec: color,
-    });
-    renderState.mat_tex = mat_tex;
-
-    const level = state.gameClient.getLevelRender().getLevel();
-    if (level.collideLava(this.dest) && !level.getCollideBridges(this.dest)) {
-      state.Particle.create(state.Particle.SPLASH_LAVA_SMALL, this.dest, null, 1);
-    } else {
-      Dynent.render(
-        camera,
-        state.Weapon.skins[this.type].fire,
-        state.Weapon.shader_noshadow_color_tex,
-        this.dest,
-        [1, 1],
-        0,
-        renderState,
-      );
-    }
-
-    mat4.identity(mat_tex);
-    mat4.trans(mat_tex, [0.5, -(Date.now() % 300) / 300]);
-    mat4.scal(mat_tex, [0.5, 0.5 * this.dynent.size.y]);
-    this.dynent.size.x = 1;
-
-    const current_buffer = gl.getParameter(gl.ARRAY_BUFFER_BINDING);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, state.Weapon.shaft_buffer);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    renderState.vertices_count = (state.Weapon.COUNT_SEGMENTS + 1) * 2;
-    renderState.vectors[0].location = state.Weapon.shader_shaft.color;
-    renderState.vectors.push({
-      location: state.Weapon.shader_shaft.norm_dir,
-      vec: [this.norm_dir.x, this.norm_dir.y, this.nap.x, this.nap.y],
-    });
-    this.dynent.render(
-      camera,
-      state.Weapon.skins[this.type].bullet,
-      state.Weapon.shader_shaft,
-      renderState,
-    );
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, current_buffer);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  render() {
+    if (!state.Q2FX || Math.random() >= 0.45) return;
+    const owner_x = this.dynent.pos.x * 2 - this.dest.x;
+    const owner_z = this.dynent.pos.y * 2 - this.dest.y;
+    const sin_a = Math.sin(this.dynent.angle);
+    const cos_a = Math.cos(this.dynent.angle);
+    const sx = owner_x + (-sin_a * 0.9) + (cos_a * 0.25);
+    const sz = owner_z + (-cos_a * 0.9) + (-sin_a * 0.25);
+    const c = this.power === ITEM.QUAD
+      ? [1.4, 0.5, 0.5, 1]
+      : [0.5, 0.75, 1.4, 1];
+    const eyeH = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
+    const start_y = eyeH - 0.15;
+    const end_y = this.dest_z !== undefined && this.dest_z > 0 ? this.dest_z : start_y;
+    state.Q2FX.shaftBeam(sx, sz, this.dest.x, this.dest.y, c, start_y, end_y);
   }
 }
 
@@ -304,10 +228,18 @@ BulletClient.bullets = [];
 BulletLine.bullets = [];
 BulletShaft.bullets = [];
 
-BulletClient.remove = function (bullet_id) {
+BulletClient.remove = function (bullet_id, pos, z) {
   for (let i = 0; i < BulletClient.bullets.length; i++) {
     if (BulletClient.bullets[i].id === bullet_id) {
-      Event.emit('cl_bulletdead', BulletClient.bullets[i]);
+      const bullet = BulletClient.bullets[i];
+      // Серверная точка смерти точнее, чем клиентская экстраполяция:
+      // используем её, чтобы декаль/частицы появились в правильной 3D-точке.
+      if (pos) {
+        bullet.dynent.pos.x = pos.x;
+        bullet.dynent.pos.y = pos.y;
+      }
+      if (typeof z === 'number') bullet.z = z;
+      Event.emit('cl_bulletdead', bullet);
       return BulletClient.bullets.splice(i, 1);
     }
   }
@@ -315,9 +247,17 @@ BulletClient.remove = function (bullet_id) {
 
 BulletClient.create = function (bullet) {
   if (bullet.bullet_type === WEAPON.ZENIT) BulletClient.remove(bullet.bulletid);
-  BulletClient.bullets.push(
-    new BulletClient(bullet.bullet_type, bullet.pos, bullet.angle, bullet.power, bullet.bulletid),
+  const bc = new BulletClient(
+    bullet.bullet_type,
+    bullet.pos,
+    bullet.angle,
+    bullet.power,
+    bullet.bulletid,
+    bullet.pitch || 0,
+    bullet.z,
   );
+  BulletClient.bullets.push(bc);
+  Event.emit('cl_bulletshoot', bc);
   if (bullet.sound) {
     const id = state.Weapon.skins[bullet.bullet_type].snd_shoot.play(bullet.pos);
     if (bullet.power === ITEM.QUAD) {
@@ -357,8 +297,7 @@ BulletShaft.create = function (server_time, bullet) {
       return;
     }
   }
-  bul.sound = state.Weapon.skins[bul.type].snd_shoot.snd.play();
-  state.Weapon.skins[bul.type].snd_shoot.volume(bul.dynent.pos, bul.sound);
+  bul.sound = state.Weapon.skins[bul.type].snd_shoot.play(bul.dynent.pos);
   BulletShaft.bullets.push(bul);
 };
 
@@ -372,6 +311,8 @@ BulletLine.create = function (server_time, bullet) {
     bullet.power,
     bullet.size_y,
     bullet.dest,
+    bullet.pitch || 0,
+    bullet.dest_z,
   );
   BulletLine.bullets.push(bul);
   const norm_dir = new Vector(-Math.sin(bullet.angle), -Math.cos(bullet.angle));
@@ -399,6 +340,47 @@ BulletClient.render = function (camera) {
   renderBullets(camera, BulletLine.bullets, false);
   renderBullets(camera, BulletShaft.bullets, false);
   gl.disable(gl.BLEND);
+};
+
+// Параметры свечения снарядов вдоль их траектории — вызывается каждый кадр
+// ПЕРЕД рендером уровня, чтобы лайты успели попасть в шейдеры пола/стен.
+const PROJECTILE_LIGHTS = {
+  [WEAPON.PISTOL]: { color: [1.0, 0.95, 0.35], intensity: 1.2, radius: 4.5 },
+  [WEAPON.PLASMA]: { color: [0.45, 0.75, 1.6], intensity: 1.3, radius: 5.5 },
+  [WEAPON.ROCKET]: { color: [1.6, 0.7, 0.25], intensity: 1.4, radius: 6.5 },
+  [WEAPON.ZENIT]:  { color: [1.0, 0.4, 1.4],  intensity: 1.1, radius: 5.0 },
+};
+BulletClient.collectLights = function (levelRender) {
+  if (!levelRender || !levelRender.addDynamicLight) return;
+  // Живые снаряды — наивысший приоритет (priority=2).
+  for (let i = 0; i < BulletClient.bullets.length; i++) {
+    const b = BulletClient.bullets[i];
+    const spec = PROJECTILE_LIGHTS[b.type];
+    if (!spec) continue;
+    const z = b.z !== undefined ? b.z : 1.4;
+    levelRender.addDynamicLight(
+      b.dynent.pos.x, z, b.dynent.pos.y,
+      spec.color, spec.intensity, spec.radius, 2);
+  }
+  // BulletLine — короткоживущие хитсканы: пара вспышек у дула и точки попадания.
+  // Приоритет 1 — ниже снарядов, но выше факелов.
+  const now = Date.now();
+  for (let i = 0; i < BulletLine.bullets.length; i++) {
+    const b = BulletLine.bullets[i];
+    const lifetime = WEAPON.wea_tabl[b.type].lifetime;
+    const elapsed = lifetime - (b.dead - now);
+    const fade = Math.max(0, 1 - elapsed / 120);
+    if (fade <= 0) continue;
+    const muzzle_color = b.type === WEAPON.RAIL ? [1.2, 0.5, 1.4] : [1.0, 0.9, 0.4];
+    levelRender.addDynamicLight(
+      b.dynent.pos.x, 1.4, b.dynent.pos.y,
+      muzzle_color, 1.4 * fade, 4.0, 1);
+    if (b.dest) {
+      levelRender.addDynamicLight(
+        b.dest.x, b.dest_z || 1.4, b.dest.y,
+        muzzle_color, 0.9 * fade, 3.5, 1);
+    }
+  }
 };
 
 state.BulletClient = BulletClient;

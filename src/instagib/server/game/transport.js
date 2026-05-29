@@ -1,7 +1,8 @@
-import { Console, assert } from '../../polyfill.js';
-import { state as runtime, getMouseAngle, VK } from '../../runtime-state.js';
+import { Console } from '../../polyfill.js';
+import { state as runtime, getMouseAngle, getMousePitch, VK } from '../../runtime-state.js';
 import { normalizeAngle } from '../libs/utility.js';
 import { Vector } from '../libs/vector.js';
+import { Bot } from '../objects/bot.js';
 import { GameEvent } from '../objects/event.js';
 
 import { WEAPON, ITEM, EVENT } from './global.js';
@@ -86,6 +87,7 @@ constructor()
     this.shield = false;
     this.shoot = false;
     this.seria = 0;
+    this.health_ratio = 1;
     //for my bot
     this.life = 0;
     this.patrons = [1 << 5, 0, 0, 0, 0, 0];
@@ -150,6 +152,11 @@ function setBot(view, offset, bot, isCamera, isControlable)
     view.setUint16(offset, toFixed(bot.dynent.angle)); offset += 2;
     view.setUint16(offset, toFixed(bot.dynent.pos.x)); offset += 2;
     view.setUint16(offset, toFixed(bot.dynent.pos.y)); offset += 2;
+    {
+        const ratio = bot.health > 0 && Bot.HEALTH > 0 ? bot.health / Bot.HEALTH : 0;
+        const hp_byte = Math.max(0, Math.min(255, Math.round(ratio * 255)));
+        view.setUint8(offset, hp_byte); offset++;
+    }
     if (isCamera)
     {
         let life = (bot.health / 40) | 0;
@@ -207,6 +214,7 @@ function getBot(view, offset, bot, isCamera)
     bot.angle = toFloat(view.getUint16(offset)); offset += 2;
     bot.x = toFloat(view.getUint16(offset)); offset += 2;
     bot.y = toFloat(view.getUint16(offset)); offset += 2;
+    bot.health_ratio = view.getUint8(offset) / 255; offset++;
     if (isCamera)
     {
         bot.life = view.getUint8(offset); offset++;
@@ -281,6 +289,12 @@ function setEvent(view, offset, event)
     {
         let bullet = event.arg1;
         view.setUint16(offset, bullet.id); offset += 2;
+        // Передаём точку смерти снаряда (pos.x, pos.y, z), чтобы клиент
+        // мог правильно поставить декаль/частицы по 3D-координатам.
+        view.setUint16(offset, toFixed(bullet.dynent.pos.x)); offset += 2;
+        view.setUint16(offset, toFixed(bullet.dynent.pos.y)); offset += 2;
+        const z_fixed = Math.max(0, Math.min(255, Math.round((bullet.z || 0) * 32)));
+        view.setUint8(offset, z_fixed); offset++;
     }
     else
     {
@@ -299,6 +313,9 @@ function setEvent(view, offset, event)
             view.setUint8(offset, val); offset++;
             view.setUint16(offset, bullet.id); offset += 2;
             view.setUint16(offset, toFixed(normalizeAngle(bullet.dynent.angle))); offset += 2;
+            view.setInt16(offset, toFixed(bullet.pitch || 0)); offset += 2;
+            const z_fixed = Math.max(0, Math.min(255, Math.round((bullet.z || 0) * 32)));
+            view.setUint8(offset, z_fixed); offset++;
         }
         else if (event.type === EVENT.LINE_SHOOT)
         {
@@ -311,6 +328,9 @@ function setEvent(view, offset, event)
             view.setUint8(offset, size); offset++;
             view.setUint16(offset, toFixed(bullet.dest.x)); offset += 2;
             view.setUint16(offset, toFixed(bullet.dest.y)); offset += 2;
+            view.setInt16(offset, toFixed(bullet.pitch || 0)); offset += 2;
+            const z_fixed = Math.max(0, Math.min(255, Math.round((bullet.dest_z || 0) * 32)));
+            view.setUint8(offset, z_fixed); offset++;
             if (bullet.type === WEAPON.SHAFT)
             {
                 view.setUint16(offset, bullet.owner.id); offset += 2;
@@ -331,6 +351,9 @@ function getEvent(view, offset, event)
     if (event.type === EVENT.BULLET_DEAD)
     {
         event.bulletid = view.getUint16(offset); offset += 2;
+        event.pos.x = toFloat(view.getUint16(offset)); offset += 2;
+        event.pos.y = toFloat(view.getUint16(offset)); offset += 2;
+        event.z = view.getUint8(offset) / 32; offset++;
     }
     else
     {
@@ -351,6 +374,8 @@ function getEvent(view, offset, event)
             event.sound = val & 0x08;
             event.bulletid = view.getUint16(offset); offset += 2;
             event.angle = toFloat(view.getUint16(offset)); offset += 2;
+            event.pitch = toFloat(view.getInt16(offset)); offset += 2;
+            event.z = view.getUint8(offset) / 32; offset++;
         }
         else if (event.type === EVENT.LINE_SHOOT)
         {
@@ -363,6 +388,8 @@ function getEvent(view, offset, event)
             let destx = toFloat(view.getUint16(offset)); offset += 2;
             let desty = toFloat(view.getUint16(offset)); offset += 2;
             event.dest = new Vector(destx, desty);
+            event.pitch = toFloat(view.getInt16(offset)); offset += 2;
+            event.dest_z = view.getUint8(offset) / 32; offset++;
             if (event.bullet_type === WEAPON.SHAFT)
             {
                 event.ownerid = view.getUint16(offset); offset += 2;
@@ -455,12 +482,13 @@ function getUserNicks(view, offset)
     return { offset: offset, ids: ret };
 }
 
-let moc_view =
-{
-    setUint8 : function(offset, val) {},
-    setUint16 : function(offset, val) {},
-    setInt16 : function(offset, val) {},
-    setUint32 : function(offset, val) {},
+// Заглушка DataView: при первом проходе серверной упаковки мы только считаем
+// размер — никакие байты не записываются, сами методы no-op.
+const moc_view = {
+    setUint8 : () => {},
+    setUint16: () => {},
+    setInt16 : () => {},
+    setUint32: () => {},
 };
 
 class Transport
@@ -524,9 +552,11 @@ constructor(socket, game)
             case CL_USER_INPUTS: {
                 const fixed_angle = view.getUint16(1);
                 const keys = view.getUint8(3);
+                const fixed_pitch = view.byteLength >= 6 ? view.getInt16(4) : 0;
                 const user_inputs =
                 {
                     angle       : toFloat(fixed_angle),
+                    pitch       : toFloat(fixed_pitch),
                     up          : keys & 1,
                     right       : keys & 2,
                     down        : keys & 4,
@@ -769,6 +799,10 @@ sendUserInputs()
 
         let angle = getMouseAngle();
         let fixed_angle = toFixed(angle);
+        let pitch = typeof getMousePitch === 'function' ? getMousePitch() : 0;
+        let fixed_pitch = toFixed(pitch);
+        if (fixed_pitch > 32767) fixed_pitch = 32767;
+        if (fixed_pitch < -32768) fixed_pitch = -32768;
         let keys = 0;
         if (VK.W()) keys |= 1;
         if (VK.D()) keys |= 2;
@@ -782,11 +816,12 @@ sendUserInputs()
         if (delta > 0) keys |= 32;
         else if (delta < 0) keys |= 64;
 
-        let data = new ArrayBuffer(1 + 2 + 1);
+        let data = new ArrayBuffer(1 + 2 + 1 + 2);
         let view = new DataView(data);
         view.setUint8(0, CL_USER_INPUTS);
         view.setUint16(1, fixed_angle);
         view.setUint8(3, keys);
+        view.setInt16(4, fixed_pitch);
         self.socket.send(data);
         let send_time = parseInt(Console.variable("send-user-input-time", "time for send user input", 33));
         setTimeout(sendInputs, send_time);
@@ -840,15 +875,12 @@ changeCamera(cmd, callback)
     }
     else
     {
-        if (typeof(cmd) !== "string" || cmd.length === 0)
-        {
-            if (callback) callback("Usage: spectator <nick>");
-            return;
-        }
-        let data = new ArrayBuffer(1 + setString(moc_view, 0, cmd));
+        // Пустая строка допустима: серверу сообщает «возьми первого попавшегося бота».
+        const nick = (typeof cmd === "string") ? cmd : "";
+        let data = new ArrayBuffer(1 + setString(moc_view, 0, nick));
         let view = new DataView(data);
         view.setUint8(0, CL_SPECTATOR);
-        setString(view, 1, cmd);
+        setString(view, 1, nick);
         this.socket.send(data);
         this.callbacks[SV_SPECTATOR] = callback;
     }
