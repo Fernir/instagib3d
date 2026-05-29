@@ -840,7 +840,11 @@ changeCamera(cmd, callback)
     }
     else
     {
-        assert(typeof(cmd) === "string");
+        if (typeof(cmd) !== "string" || cmd.length === 0)
+        {
+            if (callback) callback("Usage: spectator <nick>");
+            return;
+        }
         let data = new ArrayBuffer(1 + setString(moc_view, 0, cmd));
         let view = new DataView(data);
         view.setUint8(0, CL_SPECTATOR);

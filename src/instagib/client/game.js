@@ -83,6 +83,11 @@ constructor(param)
 
     Console.addCommand("spectator", "spectator bot with nick", function(id)
     {
+        if (!id)
+        {
+            Console.error("Usage: spectator <nick>");
+            return;
+        }
         if (transport)
         {
             transport.changeCamera(id, function(err)
