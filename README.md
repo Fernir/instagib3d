@@ -1,5 +1,7 @@
 # instagib3d
 
+![instagib3d screenshot](docs/screenshot.png)
+
 A first-person WebGL shooter built on top of the gameplay logic of
 [schibir/instagib.io](https://github.com/schibir/instagib.io). The original
 2D engine has been fully replaced with a 3D renderer, but the simulation
