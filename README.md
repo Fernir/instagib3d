@@ -1,5 +1,7 @@
 # instagib3d
 
+[**▶ Play online**](https://instagib3d.vercel.app/)
+
 ![instagib3d screenshot](docs/screenshot.png)
 
 A first-person WebGL shooter built on top of the gameplay logic of
