@@ -1,3 +1,4 @@
+import { Billboard } from '../engine/billboard.js';
 import { Texture } from '../engine/texture.js';
 import { assert } from '../polyfill.js';
 import { state } from '../runtime-state.js';
@@ -176,9 +177,6 @@ function render3DBillboard(camera, shader, tex_id, pos, size, angle, states) {
     return render3DBeam(camera, shader, tex_id, pos, size, angle || 0, states);
   }
 
-  const right_x = Math.cos(yaw);
-  const right_z = -Math.sin(yaw);
-
   const flip = size[0] < 0 ? -1 : 1;
   const eye_height = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
   const y_anchor = (states && states.y_anchor) || 'feet';
@@ -188,34 +186,8 @@ function render3DBillboard(camera, shader, tex_id, pos, size, angle, states) {
   else if (y_anchor === 'floor') center_y = y_offset;
   else center_y = sy * 0.5 + y_offset;
 
-  const mat4 = state.mat4;
-  const model = mat4.create();
-  mat4.identity(model);
-  mat4.translate(model, model, [pos.x, center_y, pos.y]);
-  const bb = new Float32Array([
-    right_x * flip,
-    0,
-    right_z * flip,
-    0,
-    0,
-    1,
-    0,
-    0,
-    -right_z,
-    0,
-    right_x,
-    0,
-    0,
-    0,
-    0,
-    1,
-  ]);
-  const tmp = mat4.create();
-  mat4.multiply(tmp, model, bb);
-  mat4.scale(tmp, tmp, [sx * 0.5, sy * 0.5, 1]);
-
-  const mat_pos = mat4.create();
-  mat4.multiply(mat_pos, state.viewProj3D, tmp);
+  const mat_pos = state.mat4.create();
+  Billboard.cylindrical(mat_pos, yaw, pos.x, center_y, pos.y, sx * 0.5, sy * 0.5, flip);
 
   applyCommonShaderState(shader, tex_id, mat_pos, states);
 

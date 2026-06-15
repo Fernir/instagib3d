@@ -12,8 +12,8 @@ physics and instagib rules — runs unchanged in the browser.
 ## Run
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Opens http://localhost:3000. Other scripts: `build`, `preview`, `lint`, `format`, `test`.

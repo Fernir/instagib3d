@@ -214,6 +214,27 @@ const MD2_LIGHTS_GLSL = `
     }`;
 
 let cachedOutlineShader = null;
+let cachedDepthShader = null;
+
+// Depth-only шейдер для прохода карты теней: та же интерполяция кадров, что в
+// основном шейдере, но без освещения — пишем только глубину из light-space.
+function makeDepthShader() {
+  const vert = `
+    attribute vec3 position;
+    attribute vec3 position_next;
+    uniform mat4 mat_pos;
+    uniform vec4 lerp;
+    void main() {
+        vec3 p = mix(position, position_next, lerp.x);
+        gl_Position = mat_pos * vec4(p, 1.0);
+    }`;
+  const frag = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
+    void main() { gl_FragColor = vec4(1.0); }`;
+  return new Shader(vert, frag, ['mat_pos', 'lerp']);
+}
 
 function makeOutlineShader() {
   const vert = `
@@ -474,6 +495,41 @@ class MD2Model {
     }
     // Фолбэк: 1×1 серая текстура — модель остаётся видимой, даже если скин не загрузился
     return getFallbackSkinId();
+  }
+
+  // Рендер только глубины в карту теней (light-space). FBO/состояние depth-pass
+  // уже выставлены вызывающим (ShadowMap.begin).
+  renderDepth(modelMatrix, frameA, frameB, lerp, lightViewProj) {
+    if (!this.frameBuffers.length) return;
+    const gl = state.gl;
+    const mat4 = state.mat4;
+    const shader = cachedDepthShader || (cachedDepthShader = makeDepthShader());
+    const last = this.frameBuffers.length - 1;
+    const a = Math.max(0, Math.min(last, frameA | 0));
+    const b = Math.max(0, Math.min(last, frameB | 0));
+    const mix = Math.max(0, Math.min(1, lerp || 0));
+    const matPos = mat4.create();
+    mat4.multiply(matPos, lightViewProj, modelMatrix);
+    const nextLoc = shader.attrib('position_next');
+
+    shader.use();
+    shader.matrix(shader.mat_pos, matPos);
+    shader.vector(shader.lerp, [mix, 0, 0, 0]);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[a]);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(nextLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[b]);
+    gl.vertexAttribPointer(nextLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount);
+
+    gl.disableVertexAttribArray(nextLoc);
+    if (state.quadBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    }
   }
 
   renderOutline(modelMatrix, frameA, frameB, lerp, neonColor, width) {

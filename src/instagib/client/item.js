@@ -7,7 +7,17 @@ import { Dynent } from '../server/objects/dynent.js';
 import { Item } from '../server/objects/item.js';
 
 import { MD2Model } from './md2.js';
+import { PickupIcon } from './pickupicon.js';
 import { Sound } from './sound.js';
+
+// 3D-иконка и цвет каждого пауэрапа: медицинский крест (HP), щит, буквы Q/R/S.
+const POWERUP_ICONS = {
+  [ITEM.LIFE]: { glyph: 'cross', color: [1.0, 0.25, 0.3] },
+  [ITEM.SHIELD]: { glyph: 'shield', color: [0.4, 0.7, 1.0] },
+  [ITEM.QUAD]: { glyph: 'Q', color: [0.65, 0.35, 1.0] },
+  [ITEM.REGEN]: { glyph: 'R', color: [0.4, 1.0, 0.5] },
+  [ITEM.SPEED]: { glyph: 'S', color: [1.0, 0.8, 0.25] },
+};
 
 // Quake 2 world weapon models (g_*/tris.md2). Цвет outline — типовая «подсветка»
 // каждого оружия в Q2 (sniper rifle красный, hyperblaster фиолетовый, etc.).
@@ -37,6 +47,22 @@ function startPickupModelLoads() {
   });
 }
 
+// Модельная матрица оружейного пикапа (покачивание + вращение). Общая для рендера и тени.
+function weaponPickupMatrix(item) {
+  const now = Date.now();
+  // Каждому предмету — свой фазовый сдвиг (по позиции), чтобы пикапы покачивались асинхронно.
+  const phase = item.x * 0.71 + item.y * 0.93;
+  const bobY = 0.55 + Math.sin(now * 0.003 + phase) * 0.1;
+  const yaw = ((now % 4000) / 4000) * Math.PI * 2 + phase;
+  const mat4 = state.mat4;
+  const m = mat4.create();
+  mat4.identity(m);
+  mat4.translate(m, m, [item.x, bobY, item.y]);
+  mat4.rotateY(m, m, yaw);
+  mat4.scale(m, m, [0.036, 0.036, 0.036]);
+  return m;
+}
+
 function renderWeaponPickup3D(item, camera) {
   if (!Item.pickupMd2) return false;
   const spec = Item.pickupMd2[item.type];
@@ -54,17 +80,8 @@ function renderWeaponPickup3D(item, camera) {
   if (!spec.model.ready()) return false;
 
   const now = Date.now();
-  // Каждому предмету — свой фазовый сдвиг (по позиции), чтобы пикапы покачивались асинхронно.
   const phase = item.x * 0.71 + item.y * 0.93;
-  const bobY = 0.55 + Math.sin(now * 0.003 + phase) * 0.1;
-  const yaw = ((now % 4000) / 4000) * Math.PI * 2 + phase;
-
-  const mat4 = state.mat4;
-  const m = mat4.create();
-  mat4.identity(m);
-  mat4.translate(m, m, [item.x, bobY, item.y]);
-  mat4.rotateY(m, m, yaw);
-  mat4.scale(m, m, [0.036, 0.036, 0.036]);
+  const m = weaponPickupMatrix(item);
 
   const gl = state.gl;
   const wasBlend = gl.isEnabled(gl.BLEND);
@@ -94,7 +111,14 @@ function renderWeaponPickup3D(item, camera) {
 }
 
 Item.render = function (camera, item) {
-  if (item.type <= WEAPON.ROCKET && renderWeaponPickup3D(item, camera)) return;
+  // Пауэрапы — 3D-иконки (крест/щит/буквы) с depth-тестом, не «просвечивают» сквозь стены.
+  const icon = POWERUP_ICONS[item.type];
+  if (icon) {
+    Item.icon.render(item, camera, icon.glyph, icon.color);
+    return;
+  }
+
+  if (renderWeaponPickup3D(item, camera)) return;
 
   const lr = state.LevelRender;
   if (lr && lr.getWorldFog) {
@@ -102,32 +126,36 @@ Item.render = function (camera, item) {
     if (lr.getWorldFog(camera.pos, probe) > 0.99) return;
   }
 
-  // Билбоард-фолбэк, пока MD2 пикапа ещё грузится / для пауэрапов (нет MD2).
-  const angle = item.type <= ITEM.LIFE ? ((Date.now() % 3000) / 3000) * Math.PI * 2 : camera.angle;
+  // Билбоард-фолбэк, пока MD2 оружия ещё грузится.
   const states = { y_anchor: 'feet', y_offset: 0.6 + Math.sin(Date.now() * 0.003) * 0.1 };
-  const tex =
-    item.type <= WEAPON.ROCKET
-      ? state.Weapon.skins[item.type].gun
-      : Item.tex_powerup[item.type - ITEM.LIFE];
   Dynent.render(
     camera,
-    tex,
+    state.Weapon.skins[item.type].gun,
     state.Weapon.shader_noshadow,
     new Vector(item.x, item.y),
     [1.2, 1.2],
-    angle,
+    camera.angle,
     states,
   );
 };
 
+// Глубина предмета в карту теней (light-space): иконка-пауэрап или MD2-оружие.
+Item.renderShadow = function (lightVP, item) {
+  const icon = POWERUP_ICONS[item.type];
+  if (icon) {
+    Item.icon.renderShadow(lightVP, item, icon.glyph);
+    return;
+  }
+  if (!Item.pickupMd2) return;
+  const spec = Item.pickupMd2[item.type];
+  if (!spec || !spec.model || !spec.model.ready()) return;
+  spec.model.renderDepth(weaponPickupMatrix(item), 0, 0, 0, lightVP);
+};
+
 Item.load = function () {
-  Item.tex_powerup = [
-    new Texture('/game/textures/fx/life.png'),
-    new Texture('/game/textures/fx/shield.png'),
-    new Texture('/game/textures/fx/quad.png'),
-    new Texture('/game/textures/fx/regen.png'),
-    new Texture('/game/textures/fx/speed.png'),
-  ];
+  Item.icon = new PickupIcon();
+  // HUD продолжает использовать плоскую иконку здоровья; мировые пауэрапы уже 3D.
+  Item.tex_powerup = [new Texture('/game/textures/fx/life.png')];
 
   Item.snd_health = new Sound('health');
   Item.snd_weapon = new Sound('pkup');
@@ -138,10 +166,7 @@ Item.load = function () {
 };
 
 Item.ready = function () {
-  for (let i = 0; i < Item.tex_powerup.length; i++) {
-    if (!Item.tex_powerup[i].ready()) return false;
-  }
-  return true;
+  return Item.tex_powerup[0].ready();
 };
 
 state.Item = Item;

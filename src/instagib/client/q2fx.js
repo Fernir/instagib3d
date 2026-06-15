@@ -1,3 +1,6 @@
+import { Billboard } from '../engine/billboard.js';
+import { GLSL } from '../engine/glsl.js';
+import { Shader } from '../engine/shader.js';
 import { Texture } from '../engine/texture.js';
 import { state } from '../runtime-state.js';
 import { WEAPON, ITEM } from '../server/game/global.js';
@@ -76,6 +79,92 @@ Q2FX.load = function () {
   Q2FX.tex_flare = new Texture('/game/textures/weapons/shaft/fire.png', {
     wrap: state.gl.CLAMP_TO_EDGE,
   });
+
+  // --- Процедурный объёмный фаербол (заменяет спрайтовые слои пламени) --------
+  const vert_fireball = `
+    attribute vec4 position;
+    uniform mat4 mat_pos;
+    varying vec2 v_local;
+    void main() {
+        v_local = position.xy;
+        gl_Position = mat_pos * position;
+    }`;
+  const frag_fireball = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
+    uniform vec4 fb_params; // x=age01, y=seed, z=intensity, w=unused
+    uniform vec4 fb_color;  // rgb базовый огонь, a=мастер-альфа
+    varying vec2 v_local;
+    ${GLSL.softDepth}
+    ${GLSL.fbm2}
+
+    void main() {
+        float age = fb_params.x;
+        float seed = fb_params.y;
+        float r = length(v_local);
+        if (r > 1.0) discard;
+
+        // Турбулентность поднимается вверх со временем; seed разносит экземпляры.
+        vec2 np = v_local * 2.2 + vec2(seed * 7.0, -age * 2.5 + seed * 3.0);
+        float n = fbm2(np);
+        float life = 1.0 - age;
+        // Искажённая шумом граница: ядро плотное, к краю рвётся в языки пламени.
+        float edge = r + n * 0.5 - 0.18;
+        float body = smoothstep(1.0, 0.2, edge) * life;
+        if (body <= 0.0) discard;
+
+        // Температурная палитра: тёмно-красный -> базовый огонь -> бело-горячее ядро.
+        float heat = clamp((1.0 - edge) * (0.55 + life * 0.9), 0.0, 1.0);
+        vec3 col = mix(vec3(0.45, 0.05, 0.01), fb_color.rgb, smoothstep(0.0, 0.5, heat));
+        col = mix(col, vec3(1.7, 1.4, 0.9), smoothstep(0.6, 1.0, heat));
+
+        float alpha = body * fb_color.a * soft_depth_fade(0.6);
+        if (alpha < 0.004) discard;
+        // Аддитивный вывод (blend ONE,ONE): premultiply на alpha и интенсивность.
+        gl_FragColor = vec4(col * alpha * fb_params.z, alpha);
+    }`;
+  Q2FX.shader_fireball = new Shader(vert_fireball, frag_fireball, [
+    'mat_pos',
+    'fb_params',
+    'fb_color',
+    'tex_depth',
+    'screen_p',
+  ]);
+
+  // --- Soft-particle шейдер для частиц Q2FX (текстура + depth-fade у геометрии) -
+  const vert_soft = Shader.vertexShader(true, false, 'gl_Position');
+  const frag_soft = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
+    uniform sampler2D tex;
+    uniform vec4 color;
+    varying vec4 texcoord;
+    ${GLSL.softDepth}
+    void main() {
+        vec4 col = texture2D(tex, texcoord.xy);
+        if (col.a < 0.02) discard;
+        col *= color;
+        col *= soft_depth_fade(0.5);
+        if (col.a < 0.004) discard;
+        gl_FragColor = col;
+    }`;
+  Q2FX.shader_soft = new Shader(vert_soft, frag_soft, [
+    'mat_pos',
+    'tex',
+    'color',
+    'tex_depth',
+    'screen_p',
+  ]);
+};
+
+// Текущая depth-инфа сцены (из level3d depth-prepass) для soft-particles/фаербола.
+Q2FX.sceneDepth = function () {
+  const lr = state.LevelRender;
+  if (!lr || !lr.getSceneDepthInfo) return null;
+  const info = lr.getSceneDepthInfo();
+  return info && info.ready ? info : null;
 };
 
 function is3D() {
@@ -130,7 +219,10 @@ Q2FX.spawn = function (opts) {
     lifetime: opts.lifetime || 400,
     blend: opts.blend || 'add',
     tex: opts.tex || null,
-    born: Date.now(),
+    // delay сдвигает «рождение» в будущее: частица невидима и не учитывается до
+    // born (t<0 в render), но физика интегрируется от спавна. Нужно для дыма —
+    // он появляется, когда фаербол уже разгорелся, а не тёмным пятном по центру.
+    born: Date.now() + (opts.delay || 0),
     last: Date.now(),
   });
 };
@@ -762,44 +854,34 @@ Q2FX.bloodBurst = function (pos, nx, nz, isGreen) {
 // (Q2FX.collectLights) на пару кадров, как настоящая вспышка от взрыва.
 Q2FX.explosionLights = [];
 
+// Активные процедурные фаерболы (рендерятся в WebGL с depth-тестом и soft-fade).
+Q2FX.fireballs = [];
+
+Q2FX.spawnFireball = function (pos, color, scale) {
+  if (!is3D()) return;
+  const eh = eyeH() - 0.5;
+  Q2FX.fireballs.push({
+    x: pos.x,
+    y: eh + 0.2 * scale,
+    z: pos.y,
+    color: color || [1.3, 0.7, 0.25],
+    scale: scale,
+    born: Date.now(),
+    lifetime: 620 + scale * 320,
+    seed: Math.random(),
+  });
+};
+
 Q2FX.explodeFlash = function (pos, color, bigness) {
   if (!is3D()) return;
   const eh = eyeH() - 0.5;
   const scale = bigness || 1.2;
   const baseColor = color || [1, 0.85, 0.4, 1];
 
-  // 1) Бело-горячее ядро — очень короткая яркая вспышка в центре.
-  Q2FX.spawn({
-    x: pos.x,
-    y: eh,
-    z: pos.y,
-    color: [1.6, 1.5, 1.2, 1],
-    color_end: [1.4, 0.5, 0.12, 0],
-    size: scale * 0.9,
-    size_end: scale * 2.2,
-    lifetime: 140,
-  });
-  // 2) Огненный шар — несколько слоёв клубящегося пламени.
-  const fireballs = Math.floor(4 + scale * 3);
-  for (let i = 0; i < fireballs; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = Math.random() * 0.35 * scale;
-    Q2FX.spawn({
-      x: pos.x + Math.cos(ang) * r,
-      y: eh + (Math.random() - 0.3) * 0.4 * scale,
-      z: pos.y + Math.sin(ang) * r,
-      vx: Math.cos(ang) * (0.6 + Math.random()) * scale,
-      vy: 0.6 + Math.random() * 1.2,
-      vz: Math.sin(ang) * (0.6 + Math.random()) * scale,
-      drag: 0.8,
-      gravity: -0.5,
-      color: [1.5, 0.9 + Math.random() * 0.3, 0.35, 1],
-      color_end: [0.6, 0.12, 0.03, 0],
-      size: (0.6 + Math.random() * 0.4) * scale,
-      size_end: (1.3 + Math.random() * 0.6) * scale,
-      lifetime: 350 + Math.random() * 300,
-    });
-  }
+  // 1+2) Объёмный клубящийся огненный шар — процедурный WebGL-фаербол вместо
+  // слоёв спрайтов. Рисуется с depth-тестом и soft-fade, поэтому не светит
+  // сквозь стены и мягко стыкуется с геометрией.
+  Q2FX.spawnFireball(pos, baseColor, scale);
   // 3) Раскалённые осколки/искры — быстрые стримеры с гравитацией.
   const sparks = Math.floor(18 + scale * 12);
   for (let i = 0; i < sparks; i++) {
@@ -865,14 +947,15 @@ Q2FX.explodeSmoke = function (pos, eh, scale, heavy) {
   const puffs = Math.floor((heavy ? 10 : 5) + scale * (heavy ? 7 : 4));
   for (let i = 0; i < puffs; i++) {
     const ang = Math.random() * Math.PI * 2;
-    const r = Math.random() * 0.5 * scale;
-    // тёмное ядро дыма + более светлые внешние клубы
-    const inner = i < puffs * 0.45;
-    const grey = inner ? 0.1 + Math.random() * 0.1 : 0.2 + Math.random() * 0.18;
-    const a0 = heavy ? (inner ? 0.72 : 0.5) : 0.5;
+    // Кольцом со смещением от центра — центр оставляем фаерболу, без тёмного пятна.
+    const r = (0.25 + Math.random() * 0.55) * scale;
+    const inner = i < puffs * 0.4;
+    const grey = inner ? 0.16 + Math.random() * 0.12 : 0.24 + Math.random() * 0.18;
+    const a0 = heavy ? (inner ? 0.6 : 0.45) : 0.45;
     Q2FX.spawn({
       x: pos.x + Math.cos(ang) * r,
-      y: eh + 0.1 + Math.random() * 0.5 * scale,
+      // Поднимаем над эпицентром, чтобы дым клубился вокруг/над пламенем.
+      y: eh + 0.35 * scale + Math.random() * 0.55 * scale,
       z: pos.y + Math.sin(ang) * r,
       vx: Math.cos(ang) * (0.3 + Math.random() * 0.6) * scale,
       vy: (heavy ? 0.8 : 0.5) + Math.random() * (heavy ? 1.5 : 0.9),
@@ -881,9 +964,11 @@ Q2FX.explodeSmoke = function (pos, eh, scale, heavy) {
       gravity: -0.45,
       color: [grey, grey * 0.92, grey * 0.85, a0],
       color_end: [0.03, 0.028, 0.025, 0],
-      size: (0.7 + Math.random() * 0.5) * scale,
+      size: (0.6 + Math.random() * 0.5) * scale,
       size_end: (2.2 + Math.random() * 1.4) * scale * (heavy ? 1.25 : 1),
       lifetime: (heavy ? 1800 : 1300) + Math.random() * (heavy ? 1400 : 900),
+      // Дым проявляется, когда фаербол уже разгорелся (не перекрывает вспышку).
+      delay: 130 + Math.random() * 170,
       blend: 'alpha',
       tex: Q2FX.tex_smoke,
     });
@@ -926,17 +1011,8 @@ Q2FX.rocketExplosion = function (pos) {
     });
   }
 
-  // Яркое раскалённое ядро-вспышка (быстро гаснет) — «бабах».
-  Q2FX.spawn({
-    x: pos.x,
-    y: eh + 0.2,
-    z: pos.y,
-    color: [1.8, 1.5, 1.0, 1],
-    color_end: [1.5, 0.5, 0.1, 0],
-    size: 1.4,
-    size_end: 3.6,
-    lifetime: 170,
-  });
+  // Дополнительный горячий фаербол — короткий яркий «бабах» поверх базового.
+  Q2FX.spawnFireball({ x: pos.x, y: pos.y }, [1.7, 1.3, 0.7], 1.2);
 };
 
 // Вклад вспышек взрывов в динамическое освещение уровня. Вызывается из game.js
@@ -961,6 +1037,7 @@ Q2FX.collectLights = function (levelRender) {
 Q2FX.update = function () {
   if (!is3D()) {
     Q2FX.particles.length = 0;
+    Q2FX.fireballs.length = 0;
     return;
   }
   const now = Date.now();
@@ -986,19 +1063,77 @@ Q2FX.update = function () {
 };
 
 const _tmp_pos = new Vector(0, 0);
+const _fb_mat = new Float32Array(16);
+
+// Процедурные фаерболы: depth-tested аддитивные биллборды с soft-fade. depth-тест
+// (включён в beginSpritePass) перекрывает их стенами, soft_depth_fade мягко гасит
+// край у геометрии — взрыв больше не светит сквозь стены.
+Q2FX.renderFireballs = function (camera) {
+  if (!Q2FX.fireballs.length || !Q2FX.shader_fireball) return;
+  const gl = state.gl;
+  if (!state.mat4 || !state.viewProj3D) return;
+  const sh = Q2FX.shader_fireball;
+  const depth = Q2FX.sceneDepth();
+  const now = Date.now();
+
+  sh.use();
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  if (depth) {
+    sh.texture(sh.tex_depth, depth.tex, 1);
+    sh.vector(sh.screen_p, [1 / state.canvas.width, 1 / state.canvas.height, depth.near, depth.far]);
+  } else {
+    sh.vector(sh.screen_p, [0, 0, 0, 0]);
+  }
+
+  const yaw = camera.angle;
+  const out = [];
+  for (let i = 0; i < Q2FX.fireballs.length; i++) {
+    const fb = Q2FX.fireballs[i];
+    const age = (now - fb.born) / fb.lifetime;
+    if (age >= 1) continue;
+    out.push(fb);
+
+    // Радиус растёт быстро (easeOut), затем держится; альфа гаснет к концу.
+    const grow = 1 - (1 - age) * (1 - age);
+    const hs = fb.scale * (0.55 + 1.9 * grow);
+    const master = Math.min(1, (1 - age) * 1.35);
+
+    Billboard.cylindrical(_fb_mat, yaw, fb.x, fb.y, fb.z, hs, hs, 1);
+
+    sh.matrix(sh.mat_pos, _fb_mat);
+    sh.vector(sh.fb_params, [age, fb.seed, 1.25, 0]);
+    sh.vector(sh.fb_color, [fb.color[0], fb.color[1], fb.color[2], master]);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    state.stats.count_dynent_rendering++;
+  }
+  Q2FX.fireballs = out;
+};
 
 Q2FX.render = function (camera) {
   if (!is3D()) return;
   if (!Q2FX.tex_glow) return;
   const gl = state.gl;
-  const shader = state.Weapon.shader_noshadow_color;
-  if (!shader) return;
+  const shaderBase = state.Weapon.shader_noshadow_color;
+  if (!shaderBase) return;
   gl.enable(gl.BLEND);
   Q2FX.renderBolts(camera);
+  Q2FX.renderFireballs(camera);
   if (!Q2FX.particles.length) {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     return;
   }
+
+  // Soft-particle шейдер, если доступна depth-текстура сцены: частицы мягко
+  // гаснут у стен/пола вместо резкого среза. Иначе — обычный текстурный шейдер.
+  const depth = Q2FX.sceneDepth();
+  const shader = depth && Q2FX.shader_soft ? Q2FX.shader_soft : shaderBase;
+  const screen_p = depth
+    ? [1 / state.canvas.width, 1 / state.canvas.height, depth.near, depth.far]
+    : null;
+
   let activeBlend = null;
   const now = Date.now();
   for (let i = 0; i < Q2FX.particles.length; i++) {
@@ -1020,10 +1155,13 @@ Q2FX.render = function (camera) {
     }
     _tmp_pos.x = p.x;
     _tmp_pos.y = p.z;
-    Dynent.render(camera, p.tex || Q2FX.tex_glow, shader, _tmp_pos, [sz, sz], 0, {
-      vectors: [{ location: shader.color, vec: [r, g, b, a] }],
-      y_offset: p.y - sz * 0.5,
-    });
+    const vectors = [{ location: shader.color, vec: [r, g, b, a] }];
+    const renderStates = { vectors: vectors, y_offset: p.y - sz * 0.5 };
+    if (screen_p) {
+      vectors.push({ location: shader.screen_p, vec: screen_p });
+      renderStates.textures = [{ location: shader.tex_depth, id: depth.tex }];
+    }
+    Dynent.render(camera, p.tex || Q2FX.tex_glow, shader, _tmp_pos, [sz, sz], 0, renderStates);
   }
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 };

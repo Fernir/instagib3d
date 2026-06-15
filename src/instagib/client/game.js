@@ -473,6 +473,19 @@ class GameClient {
         state.BulletClient.collectLights(levelRender);
       if (state.Q2FX && state.Q2FX.collectLights) state.Q2FX.collectLights(levelRender);
 
+      // Карта теней от солнца: статика рисуется внутри, динамику (боты/предметы)
+      // дорисовываем здесь в light-space перед основным проходом мира.
+      if (levelRender.renderShadows) {
+        levelRender.renderShadows(mybot.dynent, function (lightVP) {
+          framebots.forEach(function (bot) {
+            bot.renderShadow(lightVP, mybot.dynent);
+          });
+          frameitems.forEach(function (item) {
+            state.Item.renderShadow(lightVP, item);
+          });
+        });
+      }
+
       levelRender.render(mybot.dynent);
 
       if (state.Q2FX) state.Q2FX.update();

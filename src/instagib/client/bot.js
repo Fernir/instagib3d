@@ -93,11 +93,13 @@ function chooseAnim(bot) {
 const CORPSE_LIFETIME_MS = 5000;
 const CORPSE_FADE_MS = 1500;
 
-function renderBotMD2(camera, bot, spec, distFog) {
+// Поза MD2-бота: модель, матрица и пара кадров с lerp для текущей анимации.
+// Используется и обычным рендером, и проходом карты теней.
+function botPose(bot, spec) {
   const model = spec.model;
   const animName = chooseAnim(bot);
   const frames = md2Frames(model, animName);
-  if (!frames.length) return false;
+  if (!frames.length) return null;
 
   const anim = md2Anim(animName);
   const now = Date.now();
@@ -120,6 +122,18 @@ function renderBotMD2(camera, bot, spec, distFog) {
   mat4.translate(m, m, [bot.dynent.pos.x, MD2_Y_OFFSET, bot.dynent.pos.y]);
   mat4.rotateY(m, m, bot.dynent.angle);
   mat4.scale(m, m, [MD2_SCALE, MD2_SCALE, MD2_SCALE]);
+
+  return { model, m, fa: frames[ia], fb: frames[ib], lerp };
+}
+
+function renderBotMD2(camera, bot, spec, distFog) {
+  const pose = botPose(bot, spec);
+  if (!pose) return false;
+  const model = pose.model;
+  const m = pose.m;
+  const lerp = pose.lerp;
+  const now = Date.now();
+  const mat4 = state.mat4;
 
   let color = [1, 1, 1, 1];
   if (bot.power === ITEM.QUAD) color = [1.1, 0.85, 0.85, 1];
@@ -159,7 +173,7 @@ function renderBotMD2(camera, bot, spec, distFog) {
         distFog: distFog || 0,
       }
     : null;
-  model.render(m, frames[ia], frames[ib], lerp, spec.skinIndex, color, lightCtx);
+  model.render(m, pose.fa, pose.fb, lerp, spec.skinIndex, color, lightCtx);
 
   // Q2-оружие игрока — это просто ДРУГАЯ entity с тем же origin/angles/frame/oldframe
   // (см. id-Software/Quake-2/client/cl_ents.c: дублирование сущности при modelindex2).
@@ -170,8 +184,8 @@ function renderBotMD2(camera, bot, spec, distFog) {
     const wSpec = getWeaponSpec(spec, bot.weapon.type);
     if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
       const last = wSpec.model.frameBuffers.length - 1;
-      const wia = Math.max(0, Math.min(last, frames[ia] | 0));
-      const wib = Math.max(0, Math.min(last, frames[ib] | 0));
+      const wia = Math.max(0, Math.min(last, pose.fa | 0));
+      const wib = Math.max(0, Math.min(last, pose.fb | 0));
       wSpec.model.render(m, wia, wib, lerp, wSpec.skinIndex, [1, 1, 1, fadeAlpha], lightCtx);
     }
   }
@@ -185,7 +199,7 @@ function renderBotMD2(camera, bot, spec, distFog) {
     if (neon) {
       const pulse = 0.7 + 0.3 * Math.sin(now * 0.008);
       const tint = [neon[0] * pulse, neon[1] * pulse, neon[2] * pulse, 1];
-      model.renderOutline(m, frames[ia], frames[ib], lerp, tint, 0.7);
+      model.renderOutline(m, pose.fa, pose.fb, lerp, tint, 0.7);
     }
   }
 
@@ -369,61 +383,6 @@ function renderFirstPersonWeapon(camera) {
   gl.cullFace(gl.BACK);
   if (wasBlend) gl.enable(gl.BLEND);
   else gl.disable(gl.BLEND);
-}
-
-function ensureShadowShader() {
-  if (BotClient.shader_floor_shadow) return BotClient.shader_floor_shadow;
-  const vert = `
-    attribute vec2 position;
-    uniform mat4 mat_pos;
-    varying vec2 v_uv;
-    void main() {
-      v_uv = position;
-      gl_Position = mat_pos * vec4(position, 0.0, 1.0);
-    }`;
-  const frag = `
-    #ifdef GL_ES
-    precision highp float;
-    #endif
-    varying vec2 v_uv;
-    uniform vec4 color;
-    void main() {
-      float r = length(v_uv);
-      if (r > 1.0) discard;
-      float a = (1.0 - smoothstep(0.55, 1.0, r)) * color.a;
-      gl_FragColor = vec4(color.rgb, a);
-    }`;
-  BotClient.shader_floor_shadow = new Shader(vert, frag, ['mat_pos', 'color']);
-  return BotClient.shader_floor_shadow;
-}
-
-function drawFloorShadow(bot) {
-  const gl = state.gl;
-  const mat4 = state.mat4;
-  const sh = ensureShadowShader();
-
-  const radius = 0.55;
-  const m = mat4.create();
-  mat4.identity(m);
-  mat4.translate(m, m, [bot.dynent.pos.x, 0.02, bot.dynent.pos.y]);
-  mat4.rotateX(m, m, -Math.PI * 0.5);
-  mat4.scale(m, m, [radius, radius, 1]);
-
-  const matPos = mat4.create();
-  mat4.multiply(matPos, state.viewProj3D, m);
-
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.depthMask(false);
-
-  sh.use();
-  sh.matrix(sh.mat_pos, matPos);
-  sh.vector(sh.color, [0.05, 0.05, 0.05, 0.55]);
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
 function ensureBubbleShader() {
@@ -827,8 +786,30 @@ class BotClient {
     }
     const spec = pickMD2Spec(this.id);
     if (!spec || !spec.model.ready()) return;
-    if (this.alive && fog < 0.85) drawFloorShadow(this);
     renderBotMD2(camera, this, spec, fog);
+  }
+
+  // Глубина бота в карту теней (light-space). Кастит и живой моб, и труп.
+  renderShadow(lightVP, selfDynent) {
+    if (this.dynent === selfDynent) return;
+    if (!this.alive) {
+      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
+      if (dt > CORPSE_LIFETIME_MS) return;
+    }
+    const spec = pickMD2Spec(this.id);
+    if (!spec || !spec.model.ready()) return;
+    const pose = botPose(this, spec);
+    if (!pose) return;
+    pose.model.renderDepth(pose.m, pose.fa, pose.fb, pose.lerp, lightVP);
+    if (this.weapon) {
+      const wSpec = getWeaponSpec(spec, this.weapon.type);
+      if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
+        const last = wSpec.model.frameBuffers.length - 1;
+        const wia = Math.max(0, Math.min(last, pose.fa | 0));
+        const wib = Math.max(0, Math.min(last, pose.fb | 0));
+        wSpec.model.renderDepth(pose.m, wia, wib, pose.lerp, lightVP);
+      }
+    }
   }
 
   renderStats(camera) {
