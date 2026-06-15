@@ -1,0 +1,10 @@
+# PeerJS signaling server (WebRTC broker). Deploy on any VPS accessible from
+# Russia (Timeweb, Selectel, etc.), point nginx at :9000 with WSS, then set
+# VITE_PEER_HOST to that domain when building the game.
+services:
+  peerjs:
+    image: peerjs/peerjs-server:latest
+    restart: unless-stopped
+    ports:
+      - '9000:9000'
+    command: ['node', 'bin/peerjs', '--port', '9000', '--path', '/peerjs', '--proxied']

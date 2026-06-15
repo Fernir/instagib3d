@@ -41,20 +41,49 @@ class BulletClient {
       if (this.z < 0 || this.z > 4.0) return false;
 
       const level = state.gameClient.getLevelRender().getLevel();
-      if (this.type === WEAPON.ZENIT) {
-        const norm = new Vector(0, 0);
-        const tile = level.getNorm(norm, this.dynent.pos);
-        if (tile > 128) {
-          norm.normalize();
-          const dot = norm.dot(this.dynent.vel);
-          if (dot > 0) {
-            const reflect = norm.mul(2 * dot);
-            this.dynent.vel.sub(reflect);
-            this.dynent.angle = this.dynent.vel.angle() - Math.PI / 2;
+      // Рикошетит только предпоследнее оружие (ZENIT) — та же физика, что на
+      // сервере. Остальные снаряды гибнут/взрываются о стену (cl_bulletdead).
+      const norm = new Vector(0, 0);
+      const tile = level.getNorm(norm, this.dynent.pos);
+      if (tile > 128) {
+        norm.normalize();
+        const dot = norm.dot(this.dynent.vel);
+        if (dot > 0) {
+          if (this.type !== WEAPON.ZENIT) return false;
+          const reflect = norm.mul(2 * dot);
+          this.dynent.vel.sub(reflect);
+          this.dynent.angle = this.dynent.vel.angle() - Math.PI / 2;
+          if (state.Q2FX && state.Q2FX.impactSparks) {
+            state.Q2FX.impactSparks(
+              { x: this.dynent.pos.x, y: this.dynent.pos.y },
+              norm.x,
+              norm.y,
+              5,
+            );
+          }
+          // Звук рикошета (ric1..3). Глобальный троттл, чтобы рой снарядов
+          // не сливался в стену звука, + лёгкая вариация питча.
+          const ric = state.Weapon && state.Weapon.snd_ric;
+          if (ric && now - BulletClient._lastRic > 45) {
+            BulletClient._lastRic = now;
+            const r = (Math.random() * 3) | 0;
+            const sid = ric[r].play({ x: this.dynent.pos.x, y: this.dynent.pos.y });
+            if (sid !== null) ric[r].snd.rate(0.9 + Math.random() * 0.3, sid);
+          }
+          if (state.Decal && state.Weapon && state.Weapon.tex_decal) {
+            state.Decal.render_decal(
+              {
+                pos: this.dynent.pos,
+                pos_z: this.z,
+                dir: norm,
+                angle: Math.random() * Math.PI * 2,
+                size: new Vector(0.45, 0.45),
+              },
+              state.Weapon.tex_decal,
+              [0, 0, 0, 1],
+            );
           }
         }
-      } else if (level.getCollide(this.dynent.pos) > 128) {
-        return false;
       }
 
       if (this.type === WEAPON.ROCKET) {
@@ -71,6 +100,14 @@ class BulletClient {
   }
 
   render(camera) {
+    // Стена должна перекрывать снаряд: если игрок не видит снаряд по прямой —
+    // не рисуем ни спрайт, ни свечение (страховка поверх depth-теста).
+    const lr = state.LevelRender;
+    if (lr && lr.hasLineOfSight && state.gameClient && state.gameClient.getCamera) {
+      const cam = state.gameClient.getCamera();
+      if (cam && cam.dynent && !lr.hasLineOfSight(cam.dynent.pos, this.dynent.pos)) return;
+    }
+
     if (state.Q2FX && state.Q2FX.projectileGlow(camera, this)) return;
 
     if (this.type === WEAPON.ZENIT) {
@@ -81,9 +118,7 @@ class BulletClient {
         state.Weapon.skins[this.type].bullet,
         state.Weapon.shader_noshadow_color,
         {
-          vectors: [
-            { location: state.Weapon.shader_noshadow_color.color, vec: [1, 1, 1, alpha] },
-          ],
+          vectors: [{ location: state.Weapon.shader_noshadow_color.color, vec: [1, 1, 1, alpha] }],
         },
       );
     } else if (this.power === ITEM.QUAD && this.type === WEAPON.PLASMA) {
@@ -93,9 +128,7 @@ class BulletClient {
         state.Weapon.skins[this.type].bullet_quad,
         state.Weapon.shader_noshadow_color,
         {
-          vectors: [
-            { location: state.Weapon.shader_noshadow_color.color, vec: [1, 1, 1, 2.5] },
-          ],
+          vectors: [{ location: state.Weapon.shader_noshadow_color.color, vec: [1, 1, 1, 2.5] }],
         },
       );
     } else {
@@ -133,11 +166,12 @@ class BulletLine {
 }
 
 class BulletShaft {
-  constructor(pos, angle, power, size_y, dest, norm_dir, nap, ownerid, time) {
+  constructor(pos, angle, power, size_y, dest, norm_dir, nap, ownerid, time, dest_z) {
     this.type = WEAPON.SHAFT;
     this.power = power;
     this.dynent = new Dynent(pos, [0.5, size_y], angle);
     this.dest = dest;
+    this.dest_z = dest_z;
     this.nap = nap;
     this.ownerid = ownerid;
     this.norm_dir = norm_dir;
@@ -154,6 +188,7 @@ class BulletShaft {
     this.del = false;
     this.power = bullet.power;
     this.sound = bullet.sound;
+    this.dest_z = bullet.dest_z;
     this.my_time = Date.now();
 
     this.old_bul = this.new_bul;
@@ -182,11 +217,7 @@ class BulletShaft {
       const angle = bot.dynent.angle;
       const sina = Math.sin(angle);
       const cosa = Math.cos(angle);
-      const position = Vector.add2(
-        bot.dynent.pos,
-        cosa * 0.25 - sina * Y,
-        -cosa * Y - sina * 0.25,
-      );
+      const position = Vector.add2(bot.dynent.pos, cosa * 0.25 - sina * Y, -cosa * Y - sina * 0.25);
 
       this.dynent.pos.copy(position);
       this.norm_dir.set(-sina, -cosa);
@@ -198,35 +229,49 @@ class BulletShaft {
       this.dynent.size.set(0.5, len);
     }
 
-    Event.emit('cl_bulletlinecollide', this, this.dest, this.norm_dir);
-
     if (this.del) {
       state.Weapon.skins[this.type].snd_shoot.snd.stop(this.sound);
     }
     return !this.del;
   }
 
-  render() {
-    if (!state.Q2FX || Math.random() >= 0.45) return;
-    const owner_x = this.dynent.pos.x * 2 - this.dest.x;
-    const owner_z = this.dynent.pos.y * 2 - this.dest.y;
-    const sin_a = Math.sin(this.dynent.angle);
-    const cos_a = Math.cos(this.dynent.angle);
-    const sx = owner_x + (-sin_a * 0.9) + (cos_a * 0.25);
-    const sz = owner_z + (-cos_a * 0.9) + (-sin_a * 0.25);
-    const c = this.power === ITEM.QUAD
-      ? [1.4, 0.5, 0.5, 1]
-      : [0.5, 0.75, 1.4, 1];
-    const eyeH = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
-    const start_y = eyeH - 0.15;
-    const end_y = this.dest_z !== undefined && this.dest_z > 0 ? this.dest_z : start_y;
-    state.Q2FX.shaftBeam(sx, sz, this.dest.x, this.dest.y, c, start_y, end_y);
+  render(camera) {
+    if (!state.Q2FX || !state.Q2FX.shaftUpdate) return;
+    const cam =
+      camera || (state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera());
+    const camPos = cam && cam.pos ? cam : cam && cam.dynent ? cam.dynent : null;
+    if (!camPos) return;
+    const lr = state.LevelRender;
+    if (lr && lr.getWorldFog && lr.getWorldFog(camPos.pos, this.dest) > 0.95) return;
+    const c = this.power === ITEM.QUAD ? [1.45, 0.45, 0.5, 1] : [0.45, 0.7, 1.5, 1];
+
+    const eh = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
+    // Beam origin: the actual gun muzzle of the shooter.
+    let p0;
+    const bot =
+      state.gameClient && state.gameClient.getBotById
+        ? state.gameClient.getBotById(this.ownerid)
+        : null;
+    if (bot && bot.dynent && state.Q2FX.muzzleWorld) {
+      const m = state.Q2FX.muzzleWorld(bot.dynent.pos.x, bot.dynent.pos.y, bot.dynent.angle);
+      p0 = [m.x, m.y, m.z];
+    } else {
+      const ox = this.dynent.pos.x * 2 - this.dest.x;
+      const oz = this.dynent.pos.y * 2 - this.dest.y;
+      p0 = [ox, eh - 0.15, oz];
+    }
+    const endY = this.dest_z !== undefined && this.dest_z > 0 ? this.dest_z : p0[1];
+    const p1 = [this.dest.x, endY, this.dest.y];
+
+    // Animated, lingering lightning is drawn later by Q2FX.renderBolts.
+    state.Q2FX.shaftUpdate(this.ownerid, p0, p1, c);
   }
 }
 
 BulletClient.bullets = [];
 BulletLine.bullets = [];
 BulletShaft.bullets = [];
+BulletClient._lastRic = 0;
 
 BulletClient.remove = function (bullet_id, pos, z) {
   for (let i = 0; i < BulletClient.bullets.length; i++) {
@@ -256,6 +301,21 @@ BulletClient.create = function (bullet) {
     bullet.pitch || 0,
     bullet.z,
   );
+  // Свой снаряд визуально стартует из физического ствола вид-модели
+  // (bot.js публикует state.localMuzzle). Сообщение снаряда не содержит ownerid,
+  // поэтому «свой» определяем по совпадению точки спавна с позицией камеры.
+  const cam = state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera();
+  const lm = state.localMuzzle;
+  if (cam && cam.dynent && lm && Date.now() - lm.time < 200) {
+    const ddx = bullet.pos.x - cam.dynent.pos.x;
+    const ddz = bullet.pos.y - cam.dynent.pos.y;
+    if (ddx * ddx + ddz * ddz < 1.0) {
+      bc.dynent.pos.x = lm.x;
+      bc.dynent.pos.y = lm.z;
+      bc.z = lm.y;
+    }
+  }
+
   BulletClient.bullets.push(bc);
   Event.emit('cl_bulletshoot', bc);
   if (bullet.sound) {
@@ -283,6 +343,7 @@ BulletShaft.create = function (server_time, bullet) {
     bullet.nap,
     bullet.ownerid,
     server_time,
+    bullet.dest_z,
   );
   for (let i = 0; i < BulletShaft.bullets.length; i++) {
     if (BulletShaft.bullets[i].ownerid === bullet.ownerid) {
@@ -348,19 +409,34 @@ const PROJECTILE_LIGHTS = {
   [WEAPON.PISTOL]: { color: [1.0, 0.95, 0.35], intensity: 1.2, radius: 4.5 },
   [WEAPON.PLASMA]: { color: [0.45, 0.75, 1.6], intensity: 1.3, radius: 5.5 },
   [WEAPON.ROCKET]: { color: [1.6, 0.7, 0.25], intensity: 1.4, radius: 6.5 },
-  [WEAPON.ZENIT]:  { color: [1.0, 0.4, 1.4],  intensity: 1.1, radius: 5.0 },
+  [WEAPON.ZENIT]: { color: [1.0, 0.4, 1.4], intensity: 1.1, radius: 5.0 },
 };
 BulletClient.collectLights = function (levelRender) {
   if (!levelRender || !levelRender.addDynamicLight) return;
+  // Свет без теней протекает сквозь стены: снаряд за стеной подсвечивает стену
+  // с нашей стороны. Поэтому добавляем свет, только если игрок видит источник.
+  const cam = state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera();
+  const camPos = cam && cam.dynent ? cam.dynent.pos : null;
+  const litVisible = function (x, z) {
+    if (!camPos || !levelRender.hasLineOfSight) return true;
+    return levelRender.hasLineOfSight(camPos, { x: x, y: z });
+  };
   // Живые снаряды — наивысший приоритет (priority=2).
   for (let i = 0; i < BulletClient.bullets.length; i++) {
     const b = BulletClient.bullets[i];
     const spec = PROJECTILE_LIGHTS[b.type];
     if (!spec) continue;
+    if (!litVisible(b.dynent.pos.x, b.dynent.pos.y)) continue;
     const z = b.z !== undefined ? b.z : 1.4;
     levelRender.addDynamicLight(
-      b.dynent.pos.x, z, b.dynent.pos.y,
-      spec.color, spec.intensity, spec.radius, 2);
+      b.dynent.pos.x,
+      z,
+      b.dynent.pos.y,
+      spec.color,
+      spec.intensity,
+      spec.radius,
+      2,
+    );
   }
   // BulletLine — короткоживущие хитсканы: пара вспышек у дула и точки попадания.
   // Приоритет 1 — ниже снарядов, но выше факелов.
@@ -372,13 +448,27 @@ BulletClient.collectLights = function (levelRender) {
     const fade = Math.max(0, 1 - elapsed / 120);
     if (fade <= 0) continue;
     const muzzle_color = b.type === WEAPON.RAIL ? [1.2, 0.5, 1.4] : [1.0, 0.9, 0.4];
-    levelRender.addDynamicLight(
-      b.dynent.pos.x, 1.4, b.dynent.pos.y,
-      muzzle_color, 1.4 * fade, 4.0, 1);
-    if (b.dest) {
+    if (litVisible(b.dynent.pos.x, b.dynent.pos.y)) {
       levelRender.addDynamicLight(
-        b.dest.x, b.dest_z || 1.4, b.dest.y,
-        muzzle_color, 0.9 * fade, 3.5, 1);
+        b.dynent.pos.x,
+        1.4,
+        b.dynent.pos.y,
+        muzzle_color,
+        1.4 * fade,
+        4.0,
+        1,
+      );
+    }
+    if (b.dest && litVisible(b.dest.x, b.dest.y)) {
+      levelRender.addDynamicLight(
+        b.dest.x,
+        b.dest_z || 1.4,
+        b.dest.y,
+        muzzle_color,
+        0.9 * fade,
+        3.5,
+        1,
+      );
     }
   }
 };

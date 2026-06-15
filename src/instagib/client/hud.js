@@ -1,5 +1,4 @@
 import { Shader } from '../engine/shader.js';
-import { Texture } from '../engine/texture.js';
 import { Console, assert } from '../polyfill.js';
 import { state } from '../runtime-state.js';
 import { WEAPON } from '../server/game/global.js';
@@ -79,7 +78,9 @@ let HUD = {
 };
 
 HUD.addAchievement = function (type, str, prior) {
-  if (!state.playing) return;
+  const spectating =
+    state.gameClient && state.gameClient.isSpectating && state.gameClient.isSpectating();
+  if (!state.playing && !spectating) return;
   let ach = HUD.achievements[type];
   if (ach) {
     if (Date.now() < ach.time && ach.prior > prior) return;
@@ -255,67 +256,140 @@ HUD.load = function () {
 
   HUD.shader_vignette = new Shader(vert_vignette, frag_vignette, ['params']);
 
-  HUD.tex_weapon = new Texture('/game/textures/HUD/inter_wea.png');
+  // Рамка слота оружия рисуется процедурно (скруглённый прямоугольник через SDF),
+  // а не из текстуры — нет растяжения и паразитного белого фона.
+  // frame = [aspect(w/h бокса), corner_radius, border_thickness, anti-alias] в единицах полу-высоты.
+  // color = [rgb рамки, master_alpha].
+  let frag_frame =
+    '\n\
+    #ifdef GL_ES\n\
+    precision highp float;\n\
+    #endif\n\
+    varying vec4 texcoord;\n\
+    uniform vec4 frame;\n\
+    uniform vec4 color;\n\
+    void main(void)\n\
+    {\n\
+        vec2 local = texcoord.xy * 2.0 - 1.0;\n\
+        vec2 p = vec2(local.x * frame.x, local.y);\n\
+        vec2 b = vec2(frame.x, 1.0);\n\
+        float r = frame.y;\n\
+        vec2 q = abs(p) - b + r;\n\
+        float d = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;\n\
+        float aa = frame.w;\n\
+        float fillMask = 1.0 - smoothstep(-aa, aa, d);\n\
+        float ring = fillMask * smoothstep(-frame.z - aa, -frame.z + aa, d);\n\
+        vec3 fillCol = vec3(0.05, 0.06, 0.09);\n\
+        float fillA = 0.5 * fillMask;\n\
+        vec3 rgb = mix(fillCol, color.rgb, ring);\n\
+        float a = max(fillA, ring) * color.a;\n\
+        if (a < 0.004) discard;\n\
+        gl_FragColor = vec4(rgb, a);\n\
+    }\n';
 
-  Console.addCommand('top', 'print all table', function () {
-    Console.assert('not implemented yet');
-  });
+  HUD.shader_frame = new Shader(vert_hud, frag_frame, ['vec_pos', 'rotate90', 'frame', 'color']);
 };
 
 HUD.ready = function () {
-  return HUD.tex_weapon.ready();
+  return !!HUD.shader_frame;
 };
 
 HUD.render = function (bot, table, playing) {
   if (playing === undefined) playing = true;
+  const spectating =
+    state.gameClient && state.gameClient.isSpectating && state.gameClient.isSpectating();
 
   function renderWeapons() {
-    let tex_id = HUD.tex_weapon.getId();
-
     const aspect = state.canvas.width / state.canvas.height;
+    const screenH = state.canvas.height;
+    const ICON_TEX_PX = 64;
+
+    // Привязка HUD-размеров к целым пикселям — без «мыльного» субпиксельного масштаба.
+    function snapHalfNdc(halfNdc, texPx) {
+      const fullPx = halfNdc * screenH;
+      if (texPx) {
+        const scale = Math.max(1, Math.round(fullPx / texPx));
+        return (scale * texPx) / screenH;
+      }
+      const snappedPx = Math.max(2, Math.round(fullPx));
+      return snappedPx / screenH;
+    }
+
     state.gl.enable(state.gl.BLEND);
-    HUD.shader_hud.use();
+    state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
+
+    // Геометрия рамки: бокс вдвое шире своей высоты -> aspect = 2.
+    // 3-й параметр (0.07) — толщина рамки, aa = 0.012 — сглаживание.
+    const FRAME_PARAMS = [2.0, 0.45, 0.07, 0.012];
+    const SLOT_X = 0.9;
+    const SLOT_Y_TOP = 0.82;
+    const SLOT_STEP = 0.2;
+    const FRAME_HH = snapHalfNdc(0.08);
+    const FRAME_HW = (2.0 * FRAME_HH) / aspect;
+    const ICON_HH = snapHalfNdc(0.13, ICON_TEX_PX);
+    const ICON_HW = ICON_HH / aspect;
     for (let i = WEAPON.PISTOL; i <= WEAPON.ROCKET; i++) {
       let alpha = bot.patrons[i] / (1 << 5);
       if (alpha > 1) alpha = 1;
-      let current = 1;
-      if (bot.weapon.type === i) current = 2;
-      HUD.shader_hud.texture(HUD.shader_hud.tex, tex_id, 0);
-      HUD.shader_hud.vector(HUD.shader_hud.color, [1, current, 1, alpha]);
-      HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [
-        0.85,
-        0.9 - 0.15 * i,
-        2.0 / 12.0 / aspect,
-        1.0 / 12.0,
+      const selected = bot.weapon.type === i;
+      const owned = alpha > 0;
+
+      // 1) Процедурная рамка-слот (скруглённый прямоугольник).
+      let fcol;
+      let falpha;
+      if (selected) {
+        fcol = [0.45, 1.0, 0.5];
+        falpha = 1.0;
+      } else if (owned) {
+        fcol = [0.95, 0.78, 0.45];
+        falpha = 0.92;
+      } else {
+        fcol = [0.55, 0.6, 0.7];
+        falpha = 0.4;
+      }
+      HUD.shader_frame.use();
+      HUD.shader_frame.vector(HUD.shader_frame.frame, FRAME_PARAMS);
+      HUD.shader_frame.vector(HUD.shader_frame.color, [fcol[0], fcol[1], fcol[2], falpha]);
+      HUD.shader_frame.vector(HUD.shader_frame.vec_pos, [
+        SLOT_X,
+        SLOT_Y_TOP - SLOT_STEP * i,
+        FRAME_HW,
+        FRAME_HH,
       ]);
-      HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
+      HUD.shader_frame.vector(HUD.shader_frame.rotate90, [0, 0, 0, 0]);
       state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
 
+      // 2) Иконка оружия поверх рамки (текстура ствола, повёрнута на 90°).
+      HUD.shader_hud.use();
       HUD.shader_hud.texture(HUD.shader_hud.tex, state.Weapon.skins[i].gun.getId(), 0);
-      HUD.shader_hud.vector(HUD.shader_hud.color, [1, 1, 1, alpha]);
+      HUD.shader_hud.vector(HUD.shader_hud.color, [1, 1, 1, owned ? 1.0 : 0.0]);
       HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [
-        0.85,
-        0.9 - 0.15 * i,
-        1.0 / 12.0 / aspect,
-        1.0 / 12.0,
+        SLOT_X,
+        SLOT_Y_TOP - SLOT_STEP * i,
+        ICON_HW,
+        ICON_HH,
       ]);
       HUD.shader_hud.vector(HUD.shader_hud.rotate90, [1, 0, 0, 0]);
       state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
     }
 
-    HUD.shader_hud.texture(HUD.shader_hud.tex, state.Item.tex_powerup[0].getId(), 0);
-    HUD.shader_hud.vector(HUD.shader_hud.color, [2, 2, 2, 0.5]);
-    HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [-0.9, 0.9, 1.0 / 12.0 / aspect, 1.0 / 12.0]);
-    HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
-    state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
-    state.text.render([-0.85, 0.9], 2, ' ' + bot.life, 2);
+    // Иконка здоровья + число — только в активной игре (не в спектаторе).
+    if (playing) {
+      HUD.shader_hud.use();
+      HUD.shader_hud.texture(HUD.shader_hud.tex, state.Item.tex_powerup[0].getId(), 0);
+      HUD.shader_hud.vector(HUD.shader_hud.color, [2, 2, 2, 0.5]);
+      HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [-0.9, 0.9, 1.0 / 12.0 / aspect, 1.0 / 12.0]);
+      HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
+      state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
+      state.text.render([-0.85, 0.9], 2, ' ' + bot.life, 2);
+    }
 
     state.gl.disable(state.gl.BLEND);
   }
 
-  if (playing) renderWeapons();
+  if ((playing || spectating) && bot && bot.patrons && bot.weapon) renderWeapons();
 
-  if (playing) {
+  if (playing || spectating) {
     HUD.achievements.forEach(function (ach) {
       if (Date.now() < ach.time) ach.render();
     });
@@ -328,14 +402,16 @@ HUD.render = function (bot, table, playing) {
     table.forEach((row, index) => {
       let rank = '' + (index + 1) + ')';
       if (playing && index === bot.rank) rank += '>';
-      state.text.render([0, (Y -= 0.055)], 2, rank + '  ' + row.nick + '  #g' + row.scores, 1, {
+      Y -= 0.055;
+      state.text.render([0, Y], 2, rank + '  ' + row.nick + '  #g' + row.scores, 1, {
         center: true,
       });
     });
     if (playing && bot.rank > 9) {
       let nick = state.gameClient.getNickById(bot.id);
       let rank = '' + (bot.rank + 1) + ')>';
-      state.text.render([0, (Y -= 0.055)], 2, rank + '  #y' + nick + '#w  #g' + bot.scores, 1, {
+      Y -= 0.055;
+      state.text.render([0, Y], 2, rank + '  #y' + nick + '#w  #g' + bot.scores, 1, {
         center: true,
       });
     }

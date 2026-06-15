@@ -7,7 +7,6 @@ import { Vector } from '../libs/vector.js';
 import { Dynent } from './dynent.js';
 import { Weapon } from './weapon.js';
 
-
 class Bot {
   constructor(game, nick, id, isBot) {
     this.game = game;
@@ -69,6 +68,15 @@ class Bot {
 
     if (!this.alive) return true;
 
+    // God mode: keep every weapon stocked to its max each frame, which gives
+    // the god player all guns plus effectively infinite ammo (refilled before
+    // weapon.shoot() runs below).
+    if (runtime.godMode && this.nick === runtime.godNick && this.weapon) {
+      for (let t = WEAPON.PISTOL; t <= WEAPON.ROCKET; t++) {
+        this.weapon.patrons[t] = WEAPON.wea_tabl[t].patrons;
+      }
+    }
+
     if (this.ai) this.ai.update(dt);
 
     this.direction.set(0, 0);
@@ -99,6 +107,18 @@ class Bot {
         if (dot > 0) {
           let delta = norm.mul(dot * dt);
           self.dynent.pos.sub(delta);
+        }
+      }
+      // Velocity projection alone cannot eject from inside a wall — push out along
+      // the density gradient when already past the 0.5 iso-surface (tile > 128).
+      const tile = self.game.level.getCollide(self.dynent.pos, false);
+      if (tile > 128) {
+        const grad = new Vector(0, 0);
+        self.game.level.getNorm(grad, self.dynent.pos, false);
+        if (grad.length2() > 1e-8) {
+          grad.normalize();
+          const depth = Math.min(0.2, ((tile - 128) / 255) * 0.45);
+          self.dynent.pos.sub(grad.mul(depth));
         }
       }
     }

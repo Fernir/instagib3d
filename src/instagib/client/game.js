@@ -11,12 +11,8 @@ import { BotClient } from './bot.js';
 import { FakeSocketClient } from './fakesocket.js';
 import { LevelRender } from './level.js';
 
-
-
-class GameClient
-{
-constructor(param)
-{
+class GameClient {
+  constructor(param) {
     let nick = decodeURI(param.nick);
     let local = param.local;
     let addr = param.addr;
@@ -28,410 +24,496 @@ constructor(param)
     let allbots = [];
     let nicks = [];
     let mybot;
-    
+
     let server_time = 0;
     let framebots = [];
     let frameitems = [];
     let frameevents = [];
     let table = [];
+    let lastScoreStateSave = 0;
 
-    if (local !== undefined && local === "true")
-    {
-        if (state.localRoom) state.localRoom.destroy();
-        room = new Room(42, 2, "local");
-        state.localRoom = room;
-        socket = new FakeSocketClient(addr, 1);
+    function tableNick(nick) {
+      return nick && nick.length > 0 ? nick.substring(1) : nick;
     }
-    else
-    {
-        socket = new WebSocket("ws://" + addr);
+    function putScorePlayer(players, player) {
+      if (!player || !player.nick) return;
+      if (!players[player.nick]) players[player.nick] = { nick: player.nick };
+      if (typeof player.frag === 'number') players[player.nick].frag = player.frag | 0;
+      if (typeof player.scores === 'number') players[player.nick].scores = player.scores | 0;
+    }
+    function saveScoreState(force) {
+      if (!param.scoreStorageKey || !window.sessionStorage) return;
+      const now = Date.now();
+      if (!force && now < lastScoreStateSave + 500) return;
+      lastScoreStateSave = now;
+
+      const players = {};
+      for (let i = 0; i < table.length; i++) {
+        putScorePlayer(players, {
+          nick: tableNick(table[i].nick),
+          scores: table[i].scores,
+        });
+      }
+      for (let i = 0; i < framebots.length; i++) {
+        const bot = framebots[i];
+        const botNick = bot === mybot ? nick : nicks[bot.id];
+        putScorePlayer(players, {
+          nick: botNick,
+          frag: bot.frag,
+          scores: bot.scores,
+        });
+      }
+
+      const list = Object.keys(players).map(function (key) {
+        return players[key];
+      });
+      if (list.length === 0) return;
+      try {
+        window.sessionStorage.setItem(
+          param.scoreStorageKey,
+          JSON.stringify({
+            version: 1,
+            savedAt: now,
+            players: list,
+          }),
+        );
+      } catch {
+        // Storage can be disabled in private mode; migration still works without scores.
+      }
     }
 
-    socket.binaryType = "arraybuffer";
+    if (param.netSocket) {
+      // P2P join: a remote host runs the room, we are a pure client.
+      socket = param.netSocket;
+    } else if (param.mode === 'host' || (local !== undefined && local === 'true')) {
+      if (state.localRoom) state.localRoom.destroy();
+      room = new Room(42, 2, 'local');
+      if (param.scoreState && room.getGame().restoreScoreState)
+        room.getGame().restoreScoreState(param.scoreState);
+      state.localRoom = room;
+      socket = new FakeSocketClient(addr, 1);
+      // P2P host: wire incoming remote peers into our room.
+      if (param.attachHost) param.attachHost(room);
+    } else {
+      socket = new WebSocket('ws://' + addr);
+    }
+
+    socket.binaryType = 'arraybuffer';
 
     let levelRender;
     let transport;
     let playing = false;
 
-    socket.onopen = function()
-    {
-        transport = new Transport(socket, self);
-        transport.getLevelParam(function(seed, size_class)
-        {
-            let level = room ? room.getGame().level : new Level(size_class, seed);
-            levelRender = new LevelRender(level, size_class);
+    socket.onopen = function () {
+      transport = new Transport(socket, self);
+      transport.getLevelParam(function (seed, size_class) {
+        let level = room ? room.getGame().level : new Level(size_class, seed);
+        levelRender = new LevelRender(level, size_class);
 
-            transport.changeCamera("", function(err)
-            {
-                if (err && err !== "Ok") Console.error(err);
-            });
+        transport.changeCamera('', function (err) {
+          if (err && err !== 'Ok') Console.error(err);
         });
+      });
     };
-    socket.onclose = function()
-    {
-        socket = null;
-        transport.socket = null;
-        transport = null;
-        Console.error("Connection with server was lost");
+    socket.onclose = function () {
+      socket = null;
+      if (transport) transport.socket = null;
+      transport = null;
+      Console.error('Connection with server was lost');
+      // P2P: the host left — trigger host migration / reconnect.
+      if (param.onConnectionLost) param.onConnectionLost();
     };
-    socket.onerror = function(e)
-    {
-        Console.assert(false, "Сетевая ошибка " + e.message);
+    socket.onerror = function (e) {
+      Console.assert(false, 'Сетевая ошибка ' + e.message);
     };
 
-    Event.on("cl_botdead", function(pos, dir, botid)
-    {
-        const bot = allbots[botid];
-        if (!bot) return;
-        if (bot.alive) bot.deathStartTime = Date.now();
-        bot.alive = false;
-        if (pos) { bot.dynent.pos.x = pos.x; bot.dynent.pos.y = pos.y; }
+    Event.on('cl_botdead', function (pos, dir, botid) {
+      const bot = allbots[botid];
+      if (!bot) return;
+      if (bot.alive) bot.deathStartTime = Date.now();
+      bot.alive = false;
+      if (pos) {
+        bot.dynent.pos.x = pos.x;
+        bot.dynent.pos.y = pos.y;
+      }
     });
 
-    Console.addCommand("spectator", "spectator bot with nick (no arg = first bot)", function(id)
-    {
-        // Без аргумента — сервер сам выберет первого попавшегося бота.
-        if (!id) id = "";
-        if (transport)
-        {
-            transport.changeCamera(id, function(err)
-            {
-                if (err === "Ok") Console.info(err);
-                else Console.error(err);
-            });
+    // Quake-style direct weapon selection: keys 1..6 pick weapons PISTOL..ROCKET.
+    Event.on('keydown', function (key) {
+      if (!playing || !transport) return;
+      if (typeof key !== 'string' || key.length !== 1) return;
+      const digit = key.charCodeAt(0) - 48; // '0'..'9'
+      if (digit < 1 || digit > 6) return;
+      transport.selectWeapon(digit - 1);
+    });
+
+    Console.addCommand('spectator', 'spectator bot with nick (no arg = first bot)', function (id) {
+      // Без аргумента — сервер сам выберет первого попавшегося бота.
+      if (!id) id = '';
+      if (transport) {
+        transport.changeCamera(id, function (err) {
+          if (err === 'Ok') Console.info(err);
+          else Console.error(err);
+        });
+      }
+    });
+    Console.addCommand('god', 'toggle invulnerability (local game only)', function () {
+      if (!room) {
+        Console.error('god mode works only in local game');
+        return;
+      }
+      state.godMode = !state.godMode;
+      state.godNick = state.godMode ? nick : null;
+      Console.info('God mode ' + (state.godMode ? 'ON' : 'OFF'));
+    });
+    Console.addCommand('trafik', 'Average trafik (byte per package)', function () {
+      Console.info((state.stats.memory_all_package / state.stats.count_net_package) | 0);
+    });
+
+    this.isPlaying = function () {
+      return playing;
+    };
+    this.isSpectating = function () {
+      return !playing;
+    };
+    function updateSpectatorGodMode() {
+      if (playing || !room || !mybot) return;
+      let spectatorNick = nicks[mybot.id];
+      if (!spectatorNick) {
+        for (const bot of room.getGame().bots) {
+          if (bot.id === mybot.id) {
+            spectatorNick = bot.nick;
+            break;
+          }
         }
-    });
-    Console.addCommand("status", "status this session", function()
-    {
-        if (local !== undefined && local === "true") Console.debug("This is local game");
-        else Console.debug("This is online game");
-    });
-    Console.addCommand("god", "toggle invulnerability (local game only)", function()
-    {
-        if (!room) { Console.error("god mode works only in local game"); return; }
-        state.godMode = !state.godMode;
-        state.godNick = state.godMode ? nick : null;
-        Console.info("God mode " + (state.godMode ? "ON" : "OFF"));
-    });
-    Console.addCommand("trafik", "Average trafik (byte per package)", function()
-    {
-        Console.info(state.stats.memory_all_package / state.stats.count_net_package | 0);
-    });
-
-    this.isPlaying = function()
-    {
-        return playing;
+      }
+      if (spectatorNick) {
+        state.godMode = true;
+        state.godNick = spectatorNick;
+      }
+    }
+    this.getPing = function () {
+      return transport ? transport.getPing() : 0;
     };
-    this.getPing = function()
-    {
-        return transport ? transport.getPing() : 0;
+    this.tryPlayClick = function () {
+      return self.handlePlayClick();
     };
-    this.tryPlayClick = function()
-    {
-        return self.handlePlayClick();
-    };
-    this.handlePlayClick = function()
-    {
-        if (playing || !transport) return false;
-        playing = true;
-        state.playing = true;
-        transport.addUser(nick, function()
-        {
-            transport.sendUserInputs();
-            state.canvas.requestPointerLock?.();
-        });
-        return true;
+    this.handlePlayClick = function () {
+      if (playing || !transport) return false;
+      playing = true;
+      state.playing = true;
+      state.godMode = false;
+      state.godNick = null;
+      transport.addUser(nick, function () {
+        transport.sendUserInputs();
+        state.canvas.requestPointerLock?.();
+      });
+      return true;
     };
     let button_shader = null;
-    function ensureButtonShader()
-    {
-        if (button_shader) return button_shader;
-        const vert = `
+    function ensureButtonShader() {
+      if (button_shader) return button_shader;
+      const vert = `
         attribute vec2 position;
         uniform vec4 transform;
-        varying vec2 v_pos;
+        varying vec2 v_unit;
         void main()
         {
-            v_pos = position * transform.zw;
+            // Сырые координаты квада [-1,1]^2 — нормализованные по полу-высоте,
+            // SDF считаем в них (как у рамок оружия), отсюда резкий ровный край.
+            v_unit = position;
             gl_Position = vec4(transform.x + position.x * transform.z,
                                transform.y + position.y * transform.w, 0.0, 1.0);
         }`;
-        const frag = `
+      const frag = `
         #ifdef GL_ES
         precision highp float;
         #endif
+        // size  = [boxAspect (ширина/высота бокса), corner_radius, border, anti-alias]
+        // color = [rgb акцента/контура, master_alpha]
         uniform vec4 size;
         uniform vec4 color;
-        varying vec2 v_pos;
+        varying vec2 v_unit;
         void main()
         {
-            vec2 d = abs(v_pos) - (vec2(size.x, size.y) - vec2(size.z));
-            float dist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - size.z;
-            float alpha = 1.0 - smoothstep(-0.002, 0.002, dist);
-            if (alpha < 0.005) discard;
-            gl_FragColor = vec4(color.rgb, color.a * alpha);
+            float boxAspect = size.x;
+            vec2 p = vec2(v_unit.x * boxAspect, v_unit.y);
+            vec2 b = vec2(boxAspect, 1.0);
+            float r = size.y;
+            vec2 q = abs(p) - b + r;
+            float d = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+            float border = size.z;
+            float aa = size.w;
+            // Заливка тела + кольцо постоянной толщины от края внутрь (как рамки
+            // оружия) — толщина контура одинакова на всех сторонах и в углах.
+            float fillMask = 1.0 - smoothstep(-aa, aa, d);
+            float ring = fillMask * smoothstep(-border - aa, -border + aa, d);
+            vec3 fillCol = vec3(0.0, 0.0, 0.0);
+            float fillA = 0.95 * fillMask;
+            vec3 rgb = mix(fillCol, color.rgb, ring);
+            float a = max(fillA, ring) * color.a;
+            if (a < 0.004) discard;
+            gl_FragColor = vec4(rgb, a);
         }`;
-        button_shader = new Shader(vert, frag, ['transform', 'size', 'color']);
-        return button_shader;
+      button_shader = new Shader(vert, frag, ['transform', 'size', 'color']);
+      return button_shader;
     }
 
     // Кнопка Play отцентрирована по X и стоит на той же Y-линии, что и центр
     // миникарты (см. level3d.js renderMinimap -> trans(-0.8, -0.7)).
     const PLAY_BTN_Y = -0.7;
-    function isPlayButtonHovered()
-    {
-        const m = state.overlayMouse;
-        if (!m) return false;
-        const aspect = state.canvas.width / state.canvas.height;
-        const bw = 0.28 / aspect;
-        const bh = 0.09;
-        return Math.abs(m.x) <= bw && Math.abs(m.y - PLAY_BTN_Y) <= bh;
+    // Пропорция бокса (ширина/высота) и скругление в единицах полу-высоты —
+    // как у рамок оружия (2:1, r=0.45), чтобы вид совпадал.
+    const PLAY_BTN_BOX_ASPECT = 2.4;
+    const PLAY_BTN_RADIUS = 0.5;
+    function playButtonGeom() {
+      const aspect = state.canvas.width / state.canvas.height;
+      const screenH = state.canvas.height;
+      // Полу-высоту привязываем к целым пикселям — без субпиксельного «мыла».
+      const halfPx = Math.max(2, Math.round(0.085 * screenH));
+      const bh = halfPx / screenH;
+      // Ширина задаётся пропорцией бокса в пикселях, затем переводится в NDC.
+      const bw = (PLAY_BTN_BOX_ASPECT * bh) / aspect;
+      return { aspect, bw, bh };
     }
-    this.renderPlayOverlay = function()
-    {
-        if (playing) return;
-        const aspect = state.canvas.width / state.canvas.height;
-        const gl = state.gl;
-        const mat4 = state.mat4;
-        const bw = 0.28 / aspect;
-        const bh = 0.09;
-        const radius = 0.02;
-        const hovered = isPlayButtonHovered();
-
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-        Console.shader.use();
-        const mat_dim = mat4.create();
-        mat4.scal(mat_dim, [1, 1, 1]);
-        Console.shader.matrix(Console.shader.mat_pos, mat_dim);
-        Console.shader.vector(Console.shader.color, [0, 0, 0, 0.3]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-        const sh = ensureButtonShader();
-        sh.use();
-        gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
-        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-
-        // Золотая рамка при hover: рисуется чуть большим quad'ом, поверх — чёрный fill.
-        if (hovered)
-        {
-            const bo = 0.006;
-            sh.vector(sh.transform, [0, PLAY_BTN_Y, bw + bo, bh + bo]);
-            sh.vector(sh.size, [bw + bo, bh + bo, radius + bo * 0.5, 0]);
-            sh.vector(sh.color, [1.0, 0.78, 0.20, 1.0]);
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        }
-
-        sh.vector(sh.transform, [0, PLAY_BTN_Y, bw, bh]);
-        sh.vector(sh.size, [bw, bh, radius, 0]);
-        sh.vector(sh.color, [0, 0, 0, 0.95]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-        gl.disable(gl.BLEND);
-
-        // #r = красный (по умолчанию), #y = золотой при hover. Цвета в палитре
-        // render_text.js — см. там же определение #y/#r.
-        const label = hovered ? "#yPlay" : "#rPlay";
-        state.text.render([0, PLAY_BTN_Y], 2.8, label, 1, { center: true });
-    };
-    this.playButtonHitTest = function()
-    {
-        const aspect = state.canvas.width / state.canvas.height;
-        const bw = 0.28 / aspect;
-        const bh = 0.09;
-        return { x: 0, y: PLAY_BTN_Y, w: bw, h: bh };
-    };
-    this.getNickById = function(id)
-    {
-        let nick = nicks[id];
-        if (nick)
-        {
-            let color = "#y";
-            let bot = id === mybot.id ? mybot : allbots[id];
-            if (bot)
-            {
-                if (bot.seria >= 5) color = "#r";
-                else if (bot.seria <= -5) color = "#G";
-            }
-
-            function getPlace()
-            {
-                for (let i = 0; i < table.length; i++)
-                    if (table[i].nick.slice(1) === nick)
-                        return i;
-                return -1;
-            }
-
-            const place = getPlace();
-            if (place >= 0 && place < 3) color = "#C" + (place + 1) + color;
-
-            return color + nick;
-        }
-        return "";
+    function isPlayButtonHovered() {
+      const m = state.overlayMouse;
+      if (!m) return false;
+      const { bw, bh } = playButtonGeom();
+      return Math.abs(m.x) <= bw && Math.abs(m.y - PLAY_BTN_Y) <= bh;
     }
-    this.getBotById = function(id)
-    {
-        for (let i = 0; i < framebots.length; i++)
-            if (framebots[i].id === id)
-                return framebots[i];
-        return null;
-    };
-    this.getLevelRender = function()
-    {
-        return levelRender;
-    };
-    this.getNicks = function()
-    {
-        return nicks;
-    };
-    this.setUserNicks = function(ids)
-    {
-        for (let id in ids)
-        {
-            nicks[id] = ids[id];
-        }
-    };
-    this.addFrame = function(frame)
-    {
-        server_time = frame.time;
-        if (!mybot || mybot.id !== frame.mybot.id)
-        {
-            mybot = new BotClient(frame.time, frame.mybot, true);
-        }
-        mybot.addFrame(frame.time, frame.mybot, true);
-        mybot.lastFrameSeen = Date.now();
+    this.renderPlayOverlay = function () {
+      if (playing) return;
+      const gl = state.gl;
+      const mat4 = state.mat4;
+      const { aspect, bw, bh } = playButtonGeom();
+      const hovered = isPlayButtonHovered();
+      // border/aa в нормализованных (по полу-высоте) единицах — одинаковая
+      // толщина контура и резкая кромка на всех сторонах.
+      const aa = 0.02;
+      const border = hovered ? 0.09 : 0.0;
+      const boxAspect = (bw * aspect) / bh;
 
-        framebots.splice(0, framebots.length);
-        framebots.push(mybot);
-        const seenIds = new Set([mybot.id]);
-        for (let i = 0; i < frame.listbots.length; i++)
-        {
-            let bot = frame.listbots[i];
-            let id = bot.id;
-            const wasAliveLocally = allbots[id] ? allbots[id].alive : true;
-            if (!allbots[id]) allbots[id] = new BotClient(frame.time, bot, false);
-            else allbots[id].addFrame(frame.time, bot, false);
-            allbots[id].lastFrameSeen = Date.now();
-            seenIds.add(id);
-            framebots.push(allbots[id]);
-            // Если сервер мог пропустить bot_dead-событие (бот не был в visibility),
-            // считаем смерть от перехода alive→!alive в нашей кэше как точку отсчёта трупа.
-            void wasAliveLocally;
-        }
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-        // Удерживаем «пропавших» ботов: короткий пропуск visibility (250 мс) сглаживает блинк,
-        // а свежий труп остаётся лежать 3 секунды.
-        const now = Date.now();
-        const GHOST_VISIBILITY_MS = 250;
-        const CORPSE_LINGER_MS = 5000;
-        for (const idStr in allbots)
-        {
-            const id = +idStr;
-            if (seenIds.has(id)) continue;
-            const ghost = allbots[id];
-            if (!ghost) continue;
-            const inactive = now - (ghost.lastFrameSeen || 0);
-            const isCorpse = !ghost.alive && ghost.deathStartTime &&
-                now - ghost.deathStartTime < CORPSE_LINGER_MS;
-            const justGone = ghost.alive && inactive < GHOST_VISIBILITY_MS;
-            if (justGone || isCorpse)
-            {
-                framebots.push(ghost);
-            }
+      Console.shader.use();
+      const mat_dim = mat4.create();
+      mat4.scal(mat_dim, [1, 1, 1]);
+      Console.shader.matrix(Console.shader.mat_pos, mat_dim);
+      Console.shader.vector(Console.shader.color, [0, 0, 0, 0.3]);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      const sh = ensureButtonShader();
+      sh.use();
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+      // Один проход: тело + (при hover) золотое кольцо постоянной толщины.
+      const accent = hovered ? [1.0, 0.78, 0.2, 1.0] : [0, 0, 0, 0.95];
+      sh.vector(sh.transform, [0, PLAY_BTN_Y, bw, bh]);
+      sh.vector(sh.size, [boxAspect, PLAY_BTN_RADIUS, border, aa]);
+      sh.vector(sh.color, accent);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      gl.disable(gl.BLEND);
+
+      // #r = красный (по умолчанию), #y = золотой при hover. Цвета в палитре
+      // render_text.js — см. там же определение #y/#r.
+      const label = hovered ? '#yPlay' : '#rPlay';
+      state.text.render([0, PLAY_BTN_Y], 2.8, label, 1, { center: true });
+    };
+    this.playButtonHitTest = function () {
+      const { bw, bh } = playButtonGeom();
+      return { x: 0, y: PLAY_BTN_Y, w: bw, h: bh };
+    };
+    this.getNickById = function (id) {
+      let nick = nicks[id];
+      if (nick) {
+        let color = '#y';
+        let bot = id === mybot.id ? mybot : allbots[id];
+        if (bot) {
+          if (bot.seria >= 5) color = '#r';
+          else if (bot.seria <= -5) color = '#G';
         }
 
-        frameitems = frame.listitems;
-        frameevents = frame.listevents;
-        if (frame.table.length > 0) table = frame.table;
-
-        //request for nick
-        let unknown_nicks = [];
-        for (let i = 0; i < framebots.length; i++)
-        {
-            let id = framebots[i].id;
-            if (!nicks[id]) unknown_nicks.push(id);
-        }
-        transport.getUserNicks(unknown_nicks);
-        Event.emit("frame");
-    };
-    this.ready = function()
-    {
-        return levelRender && levelRender.ready() && mybot;
-    };
-    this.getCamera = function()
-    {
-        return mybot;
-    };
-    this.render = function()
-    {
-        function handleEvents()
-        {
-            frameevents.forEach((event) =>
-            {
-                switch (event.type)
-                {
-                    case EVENT.BOT_RESPAWN: return Event.emit("cl_botrespawn", event.pos);
-                    case EVENT.PAIN: return Event.emit("cl_botpain", event.pos, event.dir, event.botid);
-                    case EVENT.BOT_DEAD: return Event.emit("cl_botdead", event.pos, event.dir, event.botid);
-                    case EVENT.TAKE_WEAPON: return Event.emit("cl_takeweapon", event.pos);
-                    case EVENT.TAKE_HEALTH: return Event.emit("cl_takehealth", event.pos);
-                    case EVENT.TAKE_SHIELD: return Event.emit("cl_takeshield", event.pos);
-                    case EVENT.TAKE_POWER: return Event.emit("cl_takepower", event.pos);
-                    case EVENT.ITEM_RESPAWN: return Event.emit("cl_itemrespawn", event.pos);
-                    case EVENT.BULLET_DEAD: return state.BulletClient.remove(event.bulletid, event.pos, event.z);
-                    case EVENT.BULLET_RESPAWN: return state.BulletClient.create(event);
-                    case EVENT.LINE_SHOOT: return state.BulletLine.create(server_time, event);
-                }
-            });
-            frameevents.splice(0, frameevents.length);
+        function getPlace() {
+          for (let i = 0; i < table.length; i++) if (table[i].nick.slice(1) === nick) return i;
+          return -1;
         }
 
-        state.stats.count_dynent_rendering = 0;
-        framebots.forEach(function(bot) { bot.update(); });
-        handleEvents();
+        const place = getPlace();
+        if (place >= 0 && place < 3) color = '#C' + (place + 1) + color;
 
-        // Сбрасываем динамические лайты предыдущего кадра и собираем новые
-        // ДО рендера уровня, чтобы свет от снарядов уже попал в шейдеры пола/стен.
-        if (levelRender.clearDynamicLights) levelRender.clearDynamicLights();
-        if (state.BulletClient && state.BulletClient.collectLights)
-            state.BulletClient.collectLights(levelRender);
+        return color + nick;
+      }
+      return '';
+    };
+    this.getBotById = function (id) {
+      for (let i = 0; i < framebots.length; i++) if (framebots[i].id === id) return framebots[i];
+      return null;
+    };
+    this.getLevelRender = function () {
+      return levelRender;
+    };
+    this.getNicks = function () {
+      return nicks;
+    };
+    this.setUserNicks = function (ids) {
+      for (let id in ids) {
+        nicks[id] = ids[id];
+      }
+      saveScoreState(true);
+    };
+    this.addFrame = function (frame) {
+      server_time = frame.time;
+      if (!mybot || mybot.id !== frame.mybot.id) {
+        mybot = new BotClient(frame.time, frame.mybot, true);
+      }
+      mybot.addFrame(frame.time, frame.mybot, true);
+      mybot.lastFrameSeen = Date.now();
 
-        levelRender.render(mybot.dynent);
+      framebots.splice(0, framebots.length);
+      framebots.push(mybot);
+      const seenIds = new Set([mybot.id]);
+      for (let i = 0; i < frame.listbots.length; i++) {
+        let bot = frame.listbots[i];
+        let id = bot.id;
+        if (!allbots[id]) allbots[id] = new BotClient(frame.time, bot, false);
+        else allbots[id].addFrame(frame.time, bot, false);
+        allbots[id].lastFrameSeen = Date.now();
+        seenIds.add(id);
+        framebots.push(allbots[id]);
+      }
 
-        if (state.Q2FX) state.Q2FX.update();
+      // Удерживаем «пропавших» ботов: короткий пропуск visibility (250 мс) сглаживает блинк,
+      // а свежий труп остаётся лежать 3 секунды.
+      const now = Date.now();
+      const GHOST_VISIBILITY_MS = 250;
+      const CORPSE_LINGER_MS = 5000;
+      for (const idStr in allbots) {
+        const id = +idStr;
+        if (seenIds.has(id)) continue;
+        const ghost = allbots[id];
+        if (!ghost) continue;
+        const inactive = now - (ghost.lastFrameSeen || 0);
+        const isCorpse =
+          !ghost.alive && ghost.deathStartTime && now - ghost.deathStartTime < CORPSE_LINGER_MS;
+        const justGone = ghost.alive && inactive < GHOST_VISIBILITY_MS;
+        if (justGone || isCorpse) {
+          framebots.push(ghost);
+        }
+      }
 
-        levelRender.beginSpritePass();
-        state.gl.enable(state.gl.BLEND);
-        state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
+      frameitems = frame.listitems;
+      frameevents = frame.listevents;
+      if (frame.table.length > 0) {
+        table = frame.table;
+        saveScoreState(true);
+      }
 
-        state.Particle.render(mybot.dynent, 0);
-        frameitems.forEach(function(item) { state.Item.render(mybot.dynent, item); });
-        framebots.forEach(function(bot) { bot.render(mybot.dynent); });
-        state.BulletClient.render(mybot.dynent);
-        state.Particle.render(mybot.dynent, 1);
-        state.Particle.render(mybot.dynent, 2);
-        if (state.Q2FX) state.Q2FX.render(mybot.dynent);
+      //request for nick
+      let unknown_nicks = [];
+      for (let i = 0; i < framebots.length; i++) {
+        let id = framebots[i].id;
+        if (!nicks[id]) unknown_nicks.push(id);
+      }
+      transport.getUserNicks(unknown_nicks);
+      saveScoreState(false);
+      updateSpectatorGodMode();
+      Event.emit('frame');
+    };
+    this.ready = function () {
+      return levelRender && levelRender.ready() && mybot;
+    };
+    this.getCamera = function () {
+      return mybot;
+    };
+    this.render = function () {
+      function handleEvents() {
+        frameevents.forEach((event) => {
+          switch (event.type) {
+            case EVENT.BOT_RESPAWN:
+              return Event.emit('cl_botrespawn', event.pos);
+            case EVENT.PAIN:
+              return Event.emit('cl_botpain', event.pos, event.dir, event.botid);
+            case EVENT.BOT_DEAD:
+              return Event.emit('cl_botdead', event.pos, event.dir, event.botid);
+            case EVENT.TAKE_WEAPON:
+              return Event.emit('cl_takeweapon', event.pos);
+            case EVENT.TAKE_HEALTH:
+              return Event.emit('cl_takehealth', event.pos);
+            case EVENT.TAKE_SHIELD:
+              return Event.emit('cl_takeshield', event.pos);
+            case EVENT.TAKE_POWER:
+              return Event.emit('cl_takepower', event.pos);
+            case EVENT.ITEM_RESPAWN:
+              return Event.emit('cl_itemrespawn', event.pos);
+            case EVENT.BULLET_DEAD:
+              return state.BulletClient.remove(event.bulletid, event.pos, event.z);
+            case EVENT.BULLET_RESPAWN:
+              return state.BulletClient.create(event);
+            case EVENT.LINE_SHOOT:
+              return state.BulletLine.create(server_time, event);
+          }
+        });
+        frameevents.splice(0, frameevents.length);
+      }
 
-        state.gl.disable(state.gl.BLEND);
-        levelRender.endSpritePass();
+      state.stats.count_dynent_rendering = 0;
+      framebots.forEach(function (bot) {
+        bot.update();
+      });
+      handleEvents();
 
-        framebots.forEach(function(bot) { bot.renderStats(mybot.dynent); });
+      // Сбрасываем динамические лайты предыдущего кадра и собираем новые
+      // ДО рендера уровня, чтобы свет от снарядов уже попал в шейдеры пола/стен.
+      if (levelRender.clearDynamicLights) levelRender.clearDynamicLights();
+      if (state.BulletClient && state.BulletClient.collectLights)
+        state.BulletClient.collectLights(levelRender);
+      if (state.Q2FX && state.Q2FX.collectLights) state.Q2FX.collectLights(levelRender);
 
-        if (state.Bot && state.Bot.renderFirstPersonWeapon)
-            state.Bot.renderFirstPersonWeapon(mybot);
+      levelRender.render(mybot.dynent);
 
-        levelRender.renderMinimap(mybot.dynent);
-        state.HUD.render(mybot, table, playing);
-        if (!playing) self.renderPlayOverlay();
-        else state.text.render([0, 0], 3, "#w+", 1, { center: true, visibile: true });
+      if (state.Q2FX) state.Q2FX.update();
 
-        Console.render();
+      levelRender.beginSpritePass();
+      state.gl.enable(state.gl.BLEND);
+      state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
+
+      state.Particle.render(mybot.dynent, 0);
+      frameitems.forEach(function (item) {
+        state.Item.render(mybot.dynent, item);
+      });
+      framebots.forEach(function (bot) {
+        bot.render(mybot.dynent);
+      });
+      state.BulletClient.render(mybot.dynent);
+      state.Particle.render(mybot.dynent, 1);
+      state.Particle.render(mybot.dynent, 2);
+      if (state.Q2FX) state.Q2FX.render(mybot.dynent);
+
+      if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
+
+      state.gl.disable(state.gl.BLEND);
+      levelRender.endSpritePass();
+
+      framebots.forEach(function (bot) {
+        bot.renderStats(mybot.dynent);
+      });
+
+      if (state.Bot && state.Bot.renderFirstPersonWeapon) state.Bot.renderFirstPersonWeapon(mybot);
+
+      levelRender.renderMinimap(mybot.dynent);
+      state.HUD.render(mybot, table, playing);
+      if (!playing) self.renderPlayOverlay();
+      else state.text.render([0, 0], 3, '#w+', 1, { center: true, visibile: true });
+
+      Console.render();
     };
 
     if (socket.connect) socket.connect();
+  }
 }
-}
-
 
 export { GameClient };

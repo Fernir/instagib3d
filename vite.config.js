@@ -6,5 +6,12 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    proxy: {
+      '/peerjs': {
+        target: 'http://localhost:9000',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   },
 });

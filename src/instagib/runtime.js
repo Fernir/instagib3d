@@ -90,7 +90,8 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     if (audioUnlocked) return;
     const ctx = Howler.ctx;
     if (ctx?.state === 'suspended') {
-      ctx.resume()
+      ctx
+        .resume()
         .then(() => setAudioUnlocked(true))
         .catch(() => updateAudioMute());
       return;
@@ -134,7 +135,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     return normalizeAngle((-angle / 360.0) * (2 * Math.PI));
   };
   state.getMousePitch = function getMousePitch() {
-    const pitch = (-input.mouse_pitch * options.sens / 360.0) * (2 * Math.PI);
+    const pitch = ((-input.mouse_pitch * options.sens) / 360.0) * (2 * Math.PI);
     const limit = Math.PI * 0.48;
     return Math.max(-limit, Math.min(limit, pitch));
   };
@@ -159,9 +160,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     const buffer = gl.createBuffer();
     state.quadBuffer = buffer;
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-      -1, -1, 1, -1, -1, 1, 1, 1,
-    ]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 1);
@@ -170,86 +169,117 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   }
 
   function initEvents() {
-    document.addEventListener('keydown', (event) => {
-      if (!state.playing) {
-        event.preventDefault();
-        return;
-      }
-      Event.emit('keydown', event.key);
-      if (!Console.show) input.keys[event.keyCode] = true;
-      event.preventDefault();
-    }, false);
-    document.addEventListener('keyup', (event) => {
-      if (!state.playing) {
-        event.preventDefault();
-        return;
-      }
-      Event.emit('keyup', event.key);
-      if (!Console.show) input.keys[event.keyCode] = false;
-      event.preventDefault();
-    }, false);
-    canvas.addEventListener('click', (e) => {
-      startAssetLoads();
-      if (gameClient && !gameClient.isPlaying()) {
-        const rect = canvas.getBoundingClientRect();
-        const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-        const btn = gameClient.playButtonHitTest();
-        if (Math.abs(nx - btn.x) <= btn.w && Math.abs(ny - btn.y) <= btn.h) {
-          gameClient.handlePlayClick();
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (!state.playing) {
+          event.preventDefault();
           return;
         }
-      }
-      if (gameClient && gameClient.isPlaying()) {
-        canvas.requestPointerLock?.();
-      }
-    }, false);
-    canvas.addEventListener('mouseup', () => {
-      if (!state.playing) return;
-      input.mouse_down = false;
-    }, false);
-    canvas.addEventListener('mousedown', () => {
-      if (!state.playing) return;
-      input.mouse_down = true;
-    }, false);
-    canvas.addEventListener('mousemove', (event) => {
-      if (!state.playing) {
-        // В overlay-режиме (до нажатия Play) отслеживаем курсор в NDC,
-        // чтобы кнопки могли подсвечиваться при наведении.
-        const rect = canvas.getBoundingClientRect();
-        state.overlayMouse = {
-          x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
-          y: -(((event.clientY - rect.top) / rect.height) * 2 - 1),
-        };
-        return;
-      }
-      if (event.movementX !== undefined) {
-        input.mouse_angle += event.movementX;
-        input.mouse_pitch += event.movementY || 0;
-      }
-      else input.mouse_angle = event.pageX;
-    }, false);
+        Event.emit('keydown', event.key);
+        if (!Console.show) input.keys[event.keyCode] = true;
+        event.preventDefault();
+      },
+      false,
+    );
+    document.addEventListener(
+      'keyup',
+      (event) => {
+        if (!state.playing) {
+          event.preventDefault();
+          return;
+        }
+        Event.emit('keyup', event.key);
+        if (!Console.show) input.keys[event.keyCode] = false;
+        event.preventDefault();
+      },
+      false,
+    );
+    canvas.addEventListener(
+      'click',
+      (e) => {
+        startAssetLoads();
+        if (gameClient && !gameClient.isPlaying()) {
+          const rect = canvas.getBoundingClientRect();
+          const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+          const btn = gameClient.playButtonHitTest();
+          if (Math.abs(nx - btn.x) <= btn.w && Math.abs(ny - btn.y) <= btn.h) {
+            gameClient.handlePlayClick();
+            return;
+          }
+        }
+        if (gameClient && gameClient.isPlaying()) {
+          canvas.requestPointerLock?.();
+        }
+      },
+      false,
+    );
+    canvas.addEventListener(
+      'mouseup',
+      () => {
+        if (!state.playing) return;
+        input.mouse_down = false;
+      },
+      false,
+    );
+    canvas.addEventListener(
+      'mousedown',
+      () => {
+        if (!state.playing) return;
+        input.mouse_down = true;
+      },
+      false,
+    );
+    canvas.addEventListener(
+      'mousemove',
+      (event) => {
+        if (!state.playing) {
+          // В overlay-режиме (до нажатия Play) отслеживаем курсор в NDC,
+          // чтобы кнопки могли подсвечиваться при наведении.
+          const rect = canvas.getBoundingClientRect();
+          state.overlayMouse = {
+            x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            y: -(((event.clientY - rect.top) / rect.height) * 2 - 1),
+          };
+          return;
+        }
+        if (event.movementX !== undefined) {
+          input.mouse_angle += event.movementX;
+          input.mouse_pitch += event.movementY || 0;
+        } else input.mouse_angle = event.pageX;
+      },
+      false,
+    );
     let lastWheel = 0;
-    canvas.addEventListener('wheel', (e) => {
-      if (!state.playing) {
-        e.preventDefault();
-        return;
-      }
-      if (Date.now() > lastWheel) {
-        lastWheel = Date.now() + 60;
-        const delta = e.deltaY || e.detail || e.wheelDelta;
-        if (delta > 0) input.mouse_wheel += 1;
-        else if (delta < 0) input.mouse_wheel -= 1;
-        Event.emit('mousewheel', delta);
-        e.preventDefault();
-      }
-    }, false);
-    window.addEventListener('resize', () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      gl.viewport(0, 0, canvas.width, canvas.height);
-    }, false);
+    canvas.addEventListener(
+      'wheel',
+      (e) => {
+        if (!state.playing) {
+          e.preventDefault();
+          return;
+        }
+        if (Date.now() > lastWheel) {
+          lastWheel = Date.now() + 60;
+          const delta = e.deltaY || e.detail || e.wheelDelta;
+          if (delta > 0) input.mouse_wheel += 1;
+          else if (delta < 0) input.mouse_wheel -= 1;
+          Event.emit('mousewheel', delta);
+          e.preventDefault();
+        }
+      },
+      false,
+    );
+    window.addEventListener(
+      'resize',
+      () => {
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      },
+      false,
+    );
   }
 
   let gFrameCount = 0;
@@ -268,13 +298,15 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     return text && text.ready();
   }
   function contentReady() {
-    return assetsStarted
-      && textReady()
-      && Item.ready()
-      && Weapon.ready()
-      && HUD.ready()
-      && Bot.ready()
-      && Particle.ready();
+    return (
+      assetsStarted &&
+      textReady() &&
+      Item.ready() &&
+      Weapon.ready() &&
+      HUD.ready() &&
+      Bot.ready() &&
+      Particle.ready()
+    );
   }
   function gameReady() {
     return contentReady() && gameClient && gameClient.ready();

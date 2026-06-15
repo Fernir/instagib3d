@@ -41,7 +41,7 @@ class Bullet {
     // учётом yaw+pitch, поэтому при стрельбе вверх/вниз trail/glow появляются
     // из кончика ствола. Хитсканы (RAIL/SHAFT) трассируются от глаза.
     if (type !== WEAPON.SHAFT && type !== WEAPON.RAIL) {
-      this.z = (typeof muzzleZ === 'number') ? muzzleZ : SHOOTER_GUN_Z;
+      this.z = typeof muzzleZ === 'number' ? muzzleZ : SHOOTER_GUN_Z;
     }
 
     if (type === WEAPON.SHAFT || type === WEAPON.RAIL) {
@@ -192,22 +192,24 @@ class Bullet {
       this.z += this.vz * delta;
       if (this.z < 0 || this.z > WALL_TOP_Z) return false;
 
-      //collide map
-      if (this.type === WEAPON.ZENIT) {
+      //collide map — рикошетит только предпоследнее оружие (ZENIT);
+      // остальные снаряды гибнут/взрываются о стену.
+      if (this.z < WALL_TOP_Z) {
         let norm = new Vector(0, 0);
         let tile = this.owner.game.level.getNorm(norm, this.dynent.pos);
-        if (tile > 128 && this.z < WALL_TOP_Z) {
+        if (tile > 128) {
           norm.normalize();
           let dot = norm.dot(this.dynent.vel);
           if (dot > 0) {
+            if (this.type !== WEAPON.ZENIT) return false;
             let reflect = norm.mul(2 * dot);
             this.dynent.vel.sub(reflect);
             this.dynent.angle = this.dynent.vel.angle() - Math.PI / 2;
+            this.bounces = (this.bounces || 0) + 1;
+            // ZENIT синкает отражение событием (клиент пересоздаёт снаряд).
             Event.emit('bulletrespawn', this, false);
           }
         }
-      } else {
-        if (this.z < WALL_TOP_Z && this.owner.game.level.getCollide(this.dynent.pos) > 128) return false;
       }
 
       //collide bot

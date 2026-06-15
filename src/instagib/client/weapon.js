@@ -38,10 +38,16 @@ WeaponClient.ready = function () {
 };
 
 WeaponClient.load = function () {
+  const gl = state.gl;
+  const hudTex = {
+    filter: gl.NEAREST,
+    wrap: gl.CLAMP_TO_EDGE,
+  };
+
   function loadWeapon(name, id) {
     const path = '/game/textures/weapons/' + name + '/';
     const skin = {
-      gun: new Texture(path + 'gun.png'),
+      gun: new Texture(path + 'gun.png', hudTex),
       bullet: new Texture(path + 'bullet.png'),
       snd_shoot: new Sound(name),
     };
@@ -89,14 +95,21 @@ WeaponClient.load = function () {
 
     uniform sampler2D tex;
     uniform sampler2D tex_visible;
+    uniform vec4 fog_uv;
     varying vec4 texcoord;
 
     void main()
     {
         vec4 col = texture2D(tex, texcoord.xy);
         if (col.a < 0.1) discard;
-        vec4 visible = texture2D(tex_visible, texcoord.zw);
-        col *= 1.0 - visible.r;
+        if (fog_uv.z > 0.5) {
+            float mapFog = texture2D(tex_visible, fog_uv.xy).r;
+            mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);
+            float fog = clamp(max(mapFog, fog_uv.w), 0.0, 1.0);
+            vec3 fogCol = vec3(0.012, 0.018, 0.032);
+            col.rgb = mix(col.rgb, fogCol, fog * 0.92);
+            col.a *= (1.0 - fog * 0.95);
+        }
         gl_FragColor = col;
     }`;
 
@@ -110,23 +123,50 @@ WeaponClient.load = function () {
     uniform sampler2D tex;
     uniform sampler2D tex_visible;
     uniform vec4 color;
+    uniform vec4 fog_uv;
     varying vec4 texcoord;
 
     void main()
     {
         vec4 col = texture2D(tex, texcoord.xy);
         if (col.a < 0.1) discard;
-        vec4 visible = texture2D(tex_visible, texcoord.zw);
-        col *= (1.0 - visible.r) * color;
+        if (fog_uv.z > 0.5) {
+            float mapFog = texture2D(tex_visible, fog_uv.xy).r;
+            mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);
+            float fog = clamp(max(mapFog, fog_uv.w), 0.0, 1.0);
+            vec3 fogCol = vec3(0.012, 0.018, 0.032);
+            col.rgb = mix(col.rgb * color.rgb, fogCol, fog * 0.92);
+            col.a *= color.a * (1.0 - fog * 0.95);
+        } else {
+            col *= color;
+        }
         gl_FragColor = col;
     }`;
 
-  WeaponClient.shader_noshadow = new Shader(vert, frag_noshadow, ['mat_pos', 'tex', 'tex_visible']);
+  WeaponClient.shader_noshadow = new Shader(vert, frag_noshadow, [
+    'mat_pos',
+    'tex',
+    'tex_visible',
+    'fog_uv',
+  ]);
   WeaponClient.shader_noshadow_color = new Shader(vert, WeaponClient.frag_noshadow_color, [
     'mat_pos',
     'tex',
     'tex_visible',
     'color',
+    'fog_uv',
+  ]);
+
+  // Луч молнии (shaft): как в оригинальном instagib.io — текстура молнии,
+  // прокручиваемая вдоль луча через mat_tex (UV-скролл). Тот же color-фрагмент.
+  const vert_tex = Shader.vertexShader(true, true, 'gl_Position');
+  WeaponClient.shader_shaft = new Shader(vert_tex, WeaponClient.frag_noshadow_color, [
+    'mat_pos',
+    'mat_tex',
+    'tex',
+    'tex_visible',
+    'color',
+    'fog_uv',
   ]);
 };
 

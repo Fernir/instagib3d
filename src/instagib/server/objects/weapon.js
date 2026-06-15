@@ -17,6 +17,13 @@ class Weapon {
     this.type = type;
   }
 
+  // Direct selection (number keys). Only switch if the weapon is actually
+  // available (pistol always is).
+  select(type) {
+    if (type < WEAPON.PISTOL || type > WEAPON.ROCKET) return;
+    if (type === WEAPON.PISTOL || this.patrons[type] > 0) this.set(type);
+  }
+
   next() {
     for (let type = this.type + 1; type <= WEAPON.ROCKET; type++) {
       if (this.patrons[type] > 0) {
@@ -44,10 +51,10 @@ class Weapon {
 
       // Положение дула в системе координат камеры (right/down/forward).
       // Совпадает с тем, как видит ствол первый-лицо рендер во вьюпорте.
-      const MUZZLE_RIGHT   = 0.25;
-      const MUZZLE_DOWN    = 0.35;
+      const MUZZLE_RIGHT = 0.25;
+      const MUZZLE_DOWN = 0.35;
       const MUZZLE_FORWARD = 0.9;
-      const SHOOTER_EYE_Z  = 1.4;
+      const SHOOTER_EYE_Z = 1.4;
 
       let angle = this.owner.dynent.angle;
       if (this.type === WEAPON.PISTOL) {
@@ -55,8 +62,10 @@ class Weapon {
       }
 
       const pitch = this.owner.pitch || 0;
-      const sina = Math.sin(angle), cosa = Math.cos(angle);
-      const sinp = Math.sin(pitch), cosp = Math.cos(pitch);
+      const sina = Math.sin(angle),
+        cosa = Math.cos(angle);
+      const sinp = Math.sin(pitch),
+        cosp = Math.cos(pitch);
 
       // right   = ( cosa,        -sina,      0)
       // up      = ( sina*sinp,    cosa*sinp, cosp)
@@ -81,6 +90,9 @@ class Weapon {
         this.owner.game.bullets.push(bul);
         Event.emit('bulletrespawn', bul, true);
       } else {
+        // Рельса/шафт — мгновенный хитскан: эффект целиком в конструкторе Bullet
+        // (трассировка + урон), объект не хранится.
+        // eslint-disable-next-line sonarjs/constructor-for-side-effects
         new Bullet(this.type, position, angle, this.owner, pitch, muzzleZ);
       }
       if (this.type !== WEAPON.SHAFT) {

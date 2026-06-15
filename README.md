@@ -41,16 +41,63 @@ Opens [http://localhost:3000](http://localhost:3000) (port set in `vite.config.j
 Other scripts: `npm run build`, `npm run preview`, `npm run lint`,
 `npm run format`.
 
-## Local play
+## Play
 
-Single-player against bots by default.
+By default the game connects to a shared global multiplayer room (see
+"Multiplayer" below); add `?solo` for offline play against bots.
 
 URL parameters (all optional):
 
 - `nick` — player name (default `player`)
 - `seed` — map seed (default `42`)
 - `size_class` — map size `0`…`2`
-- `addr` — server address; `local` (or omitted) means local mode
+- `room` — private room code for peer-to-peer multiplayer (default: shared
+  global room, see below)
+- `solo` — force offline single-player against bots
+- `addr` — legacy dedicated WebSocket server address (`local` = offline)
+
+## Multiplayer (peer-to-peer, no backend)
+
+Multiplayer runs directly between browsers over WebRTC, so it needs **no
+server of our own** and works on a pure static deploy like the Vercel build.
+
+**By default everyone who opens the site joins one shared global room** — just
+share the plain URL:
+
+```
+https://instagib3d.vercel.app/
+```
+
+For a private match, add any short alphanumeric room code (everyone uses the
+same one):
+
+```
+https://instagib3d.vercel.app/?room=my-game-123
+```
+
+The first person to open a given room becomes the host (their browser runs the
+authoritative game), and everyone else automatically joins them. Signaling is
+handled by PeerJS' free public broker; once connected, game traffic is direct
+peer-to-peer.
+
+To play offline against bots only, add `?solo` (or `?addr=local`).
+
+### Host migration
+
+The host's browser is authoritative. If the host leaves, the remaining players
+**automatically re-run the room election** — one of them claims the room code
+and becomes the new host, the others re-join, all without manual action. The
+match continues on the same map (same seed), and a lightweight score snapshot
+(`frag` / `scores` by nickname) is restored by the new host. Full transient
+simulation state such as exact positions, weapons, bullets, item timers and bot
+AI state still resets, because thin clients don't carry the host's full
+simulation state (seamless state transfer would require full game-state
+replication).
+
+Notes / limitations:
+
+- Both players must be able to establish a WebRTC connection (most networks
+  work via STUN; very restrictive NATs without a TURN server may fail).
 
 In-game console commands (open with the backtick key):
 
@@ -83,12 +130,13 @@ src/
       decal.js                event glue → level3d's decal adapter
       bullet.js               BulletClient / BulletLine / BulletShaft
       bot.js, item.js, weapon.js, hud.js
-      md2.js, pcx.js          Quake-2 MD2 + PCX loaders
+      md2.js                  Quake-2 MD2 loader
       q2fx.js                 Q2-style particle / beam FX
       sound.js                Howler 3D HRTF audio
       particles.js            sparks, splashes, blood pools, explosions, respawn
       dynent.js               billboard / 3D beam draw helper
       fakesocket.js, game.js
+      peernet.js              WebRTC P2P transport (PeerJS) for ?room= play
     engine/                 WebGL helpers: shaders, textures, FBO, text, console
     server/                 in-browser "server" (room, AI, physics, transport)
 public/game/textures/, public/game/sounds/, public/game/models/   assets
@@ -104,7 +152,7 @@ Player visuals and animation come from the open-source
 [id-Software/Quake-2](https://github.com/id-Software/Quake-2) release
 (GPL source; assets from `pak0.pak`):
 
-- MD2 player models (`male` / `female` / `cyborg`) with their original PCX skins.
+- MD2 player models (`male` / `female` / `cyborg`) with PNG-converted original skins.
 - Per-body weapon meshes (`w_blaster.md2`, `w_railgun.md2`, …) — frames are
   indexed identically to body frames, matching `client/cl_ents.c` in Q2.
 - First-person view weapons (`v_*.md2`) with the original `idle*` / `pow*`
@@ -118,5 +166,5 @@ Player visuals and animation come from the open-source
 - Quake 2 source code — [id-Software/Quake-2](https://github.com/id-Software/Quake-2)
   (GPL); only rendering ideas are borrowed (frame sequencing, attaching
   `w_*.md2` to player bodies, FX effects).
-- Quake 2 assets (`*.md2`, `*.pcx`) — property of id Software; bundled here
+- Quake 2 assets (`*.md2`, converted `*.png` skins) — property of id Software; bundled here
   under their original license for educational / portfolio use only.

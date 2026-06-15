@@ -15,12 +15,20 @@ const MD2_SCALE = 0.036;
 const MD2_Y_OFFSET = 0.87;
 
 const MD2_SPECS = [
-  { model: '/game/models/q2/male/tris.md2', skin: '/game/models/q2/male/grunt.pcx' },
-  { model: '/game/models/q2/male/tris.md2', skin: '/game/models/q2/male/cipher.pcx' },
-  { model: '/game/models/q2/male/tris.md2', skin: '/game/models/q2/male/rampage.pcx' },
-  { model: '/game/models/q2/female/tris.md2', skin: '/game/models/q2/female/athena.pcx' },
+  { model: '/game/models/q2/male/tris.md2', skin: '/game/models/q2/male/grunt.png' },
+  { model: '/game/models/q2/male/tris.md2', skin: '/game/models/q2/male/cipher.png' },
+  { model: '/game/models/q2/male/tris.md2', skin: '/game/models/q2/male/rampage.png' },
+  { model: '/game/models/q2/female/tris.md2', skin: '/game/models/q2/female/athena.png' },
   { model: '/game/models/q2/cyborg/tris.md2', skin: '/game/models/q2/cyborg/rebornblue.png' },
   { model: '/game/models/q2/cyborg/tris.md2', skin: '/game/models/q2/cyborg/rebornred.png' },
+  { model: '/game/models/q2/crafty/tris.md2', skin: '/game/models/q2/crafty/crafty.png' },
+  { model: '/game/models/q2/sydney/tris.md2', skin: '/game/models/q2/sydney/sydney.png' },
+  { model: '/game/models/q2/nekochan/tris.md2', skin: '/game/models/q2/nekochan/gaenisa.png' },
+  { model: '/game/models/q2/massm/tris.md2', skin: '/game/models/q2/massm/massm.png' },
+  { model: '/game/models/q2/mcclane/tris.md2', skin: '/game/models/q2/mcclane/nakatomi1.png' },
+  { model: '/game/models/q2/homer/tris.md2', skin: '/game/models/q2/homer/homer.png' },
+  { model: '/game/models/q2/faerie/tris.md2', skin: '/game/models/q2/faerie/faerie1.png' },
+  { model: '/game/models/q2/alien/tris.md2', skin: '/game/models/q2/alien/alien.png' },
 ];
 
 const ANIM_TABLE = {
@@ -28,19 +36,50 @@ const ANIM_TABLE = {
   run: { prefix: 'run', fps: 12, once: false },
   attack: { prefix: 'attack', fps: 15, once: false },
   pain: { prefix: 'pain1', fps: 18, once: false },
-  death: { prefix: 'death1', fps: 8, once: true },
+  // prefix 'death' (не 'death1'): у части моделей кадры названы death1..death20
+  // (три анимации смерти подряд), и 'death1' хватал death1+death10..19 — тело
+  // падало дважды. Берём первую анимацию смерти — первые count кадров по порядку.
+  death: { prefix: 'death', fps: 8, once: true, count: 6 },
 };
 
 function md2Anim(name) {
   return ANIM_TABLE[name] || ANIM_TABLE.stand;
 }
 
+// Канонический порядок кадров игрока Quake 2 (фиксированный layout из 198 кадров).
+// Нужен как фолбэк для пользовательских моделей (crafty, nekochan, …), у которых
+// кадры названы обобщённо ("Frame 1", "Frame 2"…) — тогда поиск по префиксу
+// (framesByPrefix('stand')) ничего не находит и модель вообще не рисуется.
+const MD2_FRAME_RANGES = {
+  stand: [0, 39],
+  run: [40, 45],
+  attack: [46, 53],
+  pain: [54, 57],
+  death: [178, 183],
+};
+
 function md2Frames(model, name) {
   if (!model._animCache) model._animCache = {};
-  if (!model._animCache[name]) {
-    const anim = md2Anim(name);
-    model._animCache[name] = model.framesByPrefix(anim.prefix);
+  if (model._animCache[name]) return model._animCache[name];
+
+  const anim = md2Anim(name);
+  let frames = model.framesByPrefix(anim.prefix);
+
+  // Ограничиваем длину (первая анимация смерти): иначе у моделей с death1..death20
+  // в один заход проигрываются несколько падений подряд.
+  if (anim.count && frames.length > anim.count) frames = frames.slice(0, anim.count);
+
+  // Фолбэк для моделей с обобщёнными именами кадров: берём кадры по их позиции
+  // в стандартном Q2-layout. Иначе тело такого бота было бы полностью невидимым.
+  if (!frames.length) {
+    const total = model.frameBuffers ? model.frameBuffers.length : 0;
+    const range = MD2_FRAME_RANGES[name] || MD2_FRAME_RANGES.stand;
+    frames = [];
+    for (let i = range[0]; i <= range[1] && i < total; i++) frames.push(i);
+    if (!frames.length && total) frames = [0];
   }
+
+  model._animCache[name] = frames;
   return model._animCache[name];
 }
 
@@ -54,8 +93,7 @@ function chooseAnim(bot) {
 const CORPSE_LIFETIME_MS = 5000;
 const CORPSE_FADE_MS = 1500;
 
-function renderBotMD2(camera, bot, spec) {
-  void camera;
+function renderBotMD2(camera, bot, spec, distFog) {
   const model = spec.model;
   const animName = chooseAnim(bot);
   const frames = md2Frames(model, animName);
@@ -74,9 +112,7 @@ function renderBotMD2(camera, bot, spec) {
   }
   const ia = Math.floor(cursor);
   const lerp = cursor - ia;
-  const ib = anim.once
-    ? Math.min(frames.length - 1, ia + 1)
-    : (ia + 1) % frames.length;
+  const ib = anim.once ? Math.min(frames.length - 1, ia + 1) : (ia + 1) % frames.length;
 
   const mat4 = state.mat4;
   const m = mat4.create();
@@ -98,6 +134,11 @@ function renderBotMD2(camera, bot, spec) {
       fadeAlpha = Math.max(0, 1 - (dt - fadeStart) / CORPSE_FADE_MS);
     }
   }
+  if (distFog !== undefined && distFog > 0) {
+    // Полностью растворяемся к distFog≈0.9 (раньше порога cull fog>0.99),
+    // плавно начиная с 0.6 — моб тает в тумане, а не «выскакивает».
+    fadeAlpha *= Math.max(0, Math.min(1, (0.9 - distFog) / 0.3));
+  }
   color[3] = fadeAlpha;
 
   const gl = state.gl;
@@ -112,13 +153,10 @@ function renderBotMD2(camera, bot, spec) {
   gl.enable(gl.CULL_FACE);
   gl.cullFace(gl.BACK);
   const lr = state.LevelRender;
-  const lightCtx = lr && lr.levelmapTexId
+  const lightCtx = lr
     ? {
-        levelmapId: lr.levelmapTexId,
-        worldX: bot.dynent.pos.x,
-        worldZ: bot.dynent.pos.y,
-        invLevelSize: lr.levelSize ? 1 / lr.levelSize : 0,
         sunDir: lr.sunDir || [0.6, -0.8, 0.4],
+        distFog: distFog || 0,
       }
     : null;
   model.render(m, frames[ia], frames[ib], lerp, spec.skinIndex, color, lightCtx);
@@ -134,19 +172,16 @@ function renderBotMD2(camera, bot, spec) {
       const last = wSpec.model.frameBuffers.length - 1;
       const wia = Math.max(0, Math.min(last, frames[ia] | 0));
       const wib = Math.max(0, Math.min(last, frames[ib] | 0));
-      wSpec.model.render(
-        m, wia, wib, lerp,
-        wSpec.skinIndex, [1, 1, 1, fadeAlpha], lightCtx,
-      );
+      wSpec.model.render(m, wia, wib, lerp, wSpec.skinIndex, [1, 1, 1, fadeAlpha], lightCtx);
     }
   }
 
   // Неоновая обводка от усилений (если нет щита — щит покажет «пузырь» сверху).
   if (bot.alive && !bot.shield && bot.power) {
     let neon = null;
-    if (bot.power === ITEM.QUAD)        neon = [0.4, 0.2, 1.0, 1];
-    else if (bot.power === ITEM.REGEN)  neon = [0.25, 1.0, 0.35, 1];
-    else if (bot.power === ITEM.SPEED)  neon = [1.0, 0.85, 0.25, 1];
+    if (bot.power === ITEM.QUAD) neon = [0.4, 0.2, 1.0, 1];
+    else if (bot.power === ITEM.REGEN) neon = [0.25, 1.0, 0.35, 1];
+    else if (bot.power === ITEM.SPEED) neon = [1.0, 0.85, 0.25, 1];
     if (neon) {
       const pulse = 0.7 + 0.3 * Math.sin(now * 0.008);
       const tint = [neon[0] * pulse, neon[1] * pulse, neon[2] * pulse, 1];
@@ -170,6 +205,56 @@ function renderBotMD2(camera, bot, spec) {
   return true;
 }
 
+// Индекс «кончика ствола» в меше оружия — самая передняя вершина (макс Q2 +X).
+// Кешируется на модели. Берётся из кадра 0, индексация вершин одинакова во всех кадрах.
+function weaponMuzzleVertexIndex(model) {
+  if (model._muzzleVI !== undefined) return model._muzzleVI;
+  const v =
+    model.md2 && model.md2.frames && model.md2.frames[0] ? model.md2.frames[0].vertices : null;
+  let bi = -1;
+  if (v) {
+    let best = -Infinity;
+    for (let i = 0; i < v.length; i += 3) {
+      if (v[i] > best) {
+        best = v[i];
+        bi = i;
+      }
+    }
+  }
+  model._muzzleVI = bi;
+  return bi;
+}
+
+// Мировая точка кончика ствола: берём вершину-дуло из текущего интерполируемого
+// кадра и прогоняем через ту же матрицу, что и сам меш оружия.
+function publishLocalMuzzle(model, fIa, fIb, lerp, m, fwd, now) {
+  const vi = weaponMuzzleVertexIndex(model);
+  if (vi < 0) return;
+  const fa = model.md2.frames[fIa] && model.md2.frames[fIa].vertices;
+  const fb = model.md2.frames[fIb] && model.md2.frames[fIb].vertices;
+  if (!fa || !fb) return;
+  const qx = fa[vi] * (1 - lerp) + fb[vi] * lerp;
+  const qy = fa[vi + 1] * (1 - lerp) + fb[vi + 1] * lerp;
+  const qz = fa[vi + 2] * (1 - lerp) + fb[vi + 2] * lerp;
+  // Q2(forward,side,up) -> engine model-space (X=side, Y=up, Z=-forward).
+  const ex = qy,
+    ey = qz,
+    ez = -qx;
+  // m — column-major (gl-matrix): world = m * [ex,ey,ez,1].
+  const wx = m[0] * ex + m[4] * ey + m[8] * ez + m[12];
+  const wy = m[1] * ex + m[5] * ey + m[9] * ez + m[13];
+  const wz = m[2] * ex + m[6] * ey + m[10] * ez + m[14];
+  state.localMuzzle = {
+    x: wx,
+    y: wy,
+    z: wz,
+    fx: fwd[0],
+    fy: fwd[1],
+    fz: fwd[2],
+    time: now,
+  };
+}
+
 function renderFirstPersonWeapon(camera) {
   if (!camera || !state.viewProj3D) return;
   if (!state.gameClient) return;
@@ -179,7 +264,8 @@ function renderFirstPersonWeapon(camera) {
   // FP-view предпочитает оригинальные view-модели (v_*.md2). Если их нет —
   // фолбэк на body-weapon модели той же player-модели, что использует бот.
   const myBodySpec = pickMD2Spec(myBot.id || 0);
-  const wSpec = getViewWeaponSpec(myBot.weapon.type) || getWeaponSpec(myBodySpec, myBot.weapon.type);
+  const wSpec =
+    getViewWeaponSpec(myBot.weapon.type) || getWeaponSpec(myBodySpec, myBot.weapon.type);
   if (!wSpec) return;
 
   const now = Date.now();
@@ -202,15 +288,17 @@ function renderFirstPersonWeapon(camera) {
   const bobAmp = Math.min(1, speed / (Bot.SPEED * 0.5));
   const t = now * 0.012;
   const bobY = Math.sin(t * 2.0) * 0.018 * bobAmp;
-  const bobX = Math.cos(t)       * 0.022 * bobAmp;
+  const bobX = Math.cos(t) * 0.022 * bobAmp;
 
   const yaw = camera.dynent.angle;
-  const pitch = (typeof getMousePitch === 'function') ? getMousePitch() : 0;
+  const pitch = typeof getMousePitch === 'function' ? getMousePitch() : 0;
   const eye_h = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
 
   // Направления камеры (right/up/forward) — те же, что в level3d.js буфере камеры.
-  const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  const sy = Math.sin(yaw), cy = Math.cos(yaw);
+  const cp = Math.cos(pitch),
+    sp = Math.sin(pitch);
+  const sy = Math.sin(yaw),
+    cy = Math.cos(yaw);
   const fwd_x = -sy * cp;
   const fwd_y = -sp;
   const fwd_z = -cy * cp;
@@ -228,8 +316,8 @@ function renderFirstPersonWeapon(camera) {
   // Q2 view-модель сделана так, что её origin совпадает с глазом (vieworg),
   // а форма уже включает «правильный» сдвиг вниз/вправо. Добавляем только bob/sway.
   const offRight = bobX;
-  const offDown  = bobY;
-  const offFwd   = 0;
+  const offDown = bobY;
+  const offFwd = 0;
 
   const wpx = eye_x + right_x * offRight + up_x * offDown + fwd_x * offFwd;
   const wpy = eye_y + right_y * offRight + up_y * offDown + fwd_y * offFwd;
@@ -246,6 +334,9 @@ function renderFirstPersonWeapon(camera) {
   // оказываются с правильной стороны вида.
   const VIEW_SCALE = 0.028;
   mat4.scale(m, m, [-VIEW_SCALE, VIEW_SCALE, VIEW_SCALE]);
+
+  // Физический кончик ствола в мире — для луча/вспышки/старта снарядов.
+  publishLocalMuzzle(wSpec.model, wFrames[ia], wFrames[ib], lerp, m, [fwd_x, fwd_y, fwd_z], now);
 
   const wasDepth = gl.isEnabled(gl.DEPTH_TEST);
   const wasCull = gl.isEnabled(gl.CULL_FACE);
@@ -265,14 +356,10 @@ function renderFirstPersonWeapon(camera) {
   // лайтмапа в позиции игрока (не у глаз) — так оружие реагирует на свет «тайла»,
   // где стоит игрок, а не на тот, что под камерой/на полу за спиной.
   const lr2 = state.LevelRender;
-  wSpec.model.render(
-    m, wFrames[ia], wFrames[ib], lerp, wSpec.skinIndex,
-    [1.05, 1.05, 1.05, 1],
-    {
-      sunDir: lr2 && lr2.sunDir ? lr2.sunDir : [0.4, -0.85, 0.35],
-      worldRef: [camera.dynent.pos.x, eye_h, camera.dynent.pos.y],
-    },
-  );
+  wSpec.model.render(m, wFrames[ia], wFrames[ib], lerp, wSpec.skinIndex, [1.05, 1.05, 1.05, 1], {
+    sunDir: lr2 && lr2.sunDir ? lr2.sunDir : [0.4, -0.85, 0.35],
+    worldRef: [camera.dynent.pos.x, eye_h, camera.dynent.pos.y],
+  });
 
   gl.depthMask(wasDepthMask);
   if (wasDepth) gl.enable(gl.DEPTH_TEST);
@@ -381,10 +468,22 @@ function drawShieldBubble(modelMatrix) {
   const right_z = -Math.sin(yaw);
 
   const bb = new Float32Array([
-    right_x, 0, right_z, 0,
-    0, 1, 0, 0,
-    -right_z, 0, right_x, 0,
-    0, 0, 0, 1,
+    right_x,
+    0,
+    right_z,
+    0,
+    0,
+    1,
+    0,
+    0,
+    -right_z,
+    0,
+    right_x,
+    0,
+    0,
+    0,
+    0,
+    1,
   ]);
   const tmp = mat4.create();
   mat4.multiply(tmp, modelMatrix, bb);
@@ -425,9 +524,10 @@ function ensureHpBarShader() {
   return BotClient.shader_hpbar;
 }
 
-function drawHpBar(nx, ny, width, height, ratio) {
+function drawHpBar(nx, ny, width, height, ratio, opacity) {
   const gl = state.gl;
   if (!state.quadBuffer) return;
+  const a = opacity === undefined ? 1 : Math.max(0, Math.min(1, opacity));
   const sh = ensureHpBarShader();
   const hw = width * 0.5;
   const hh = height * 0.5;
@@ -442,20 +542,20 @@ function drawHpBar(nx, ny, width, height, ratio) {
   sh.use();
   // фон с лёгкой обводкой через чёрный чуть больший прямоугольник
   sh.vector(sh.rect, [nx, ny, hw + 0.004, hh + 0.004]);
-  sh.vector(sh.color, [0, 0, 0, 0.85]);
+  sh.vector(sh.color, [0, 0, 0, 0.85 * a]);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   sh.vector(sh.rect, [nx, ny, hw, hh]);
-  sh.vector(sh.color, [0.12, 0.12, 0.12, 0.85]);
+  sh.vector(sh.color, [0.12, 0.12, 0.12, 0.85 * a]);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   const clamped = Math.max(0, Math.min(1, ratio));
   if (clamped > 0) {
     const fillW = hw * clamped;
     const fillX = nx - hw + fillW;
-    let color = [0.25, 0.85, 0.25, 0.95];
-    if (clamped < 0.6) color = [0.95, 0.85, 0.2, 0.95];
-    if (clamped < 0.3) color = [0.95, 0.25, 0.2, 0.95];
+    let color = [0.25, 0.85, 0.25, 0.95 * a];
+    if (clamped < 0.6) color = [0.95, 0.85, 0.2, 0.95 * a];
+    if (clamped < 0.3) color = [0.95, 0.25, 0.2, 0.95 * a];
     sh.vector(sh.rect, [fillX, ny, fillW, hh]);
     sh.vector(sh.color, color);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -464,25 +564,20 @@ function drawHpBar(nx, ny, width, height, ratio) {
   if (!wasBlend) gl.disable(gl.BLEND);
 }
 
-function hasLineOfSight(camera, targetPos) {
-  if (!state.gameClient) return true;
-  const lr = state.gameClient.getLevelRender();
-  if (!lr || typeof lr.getLevel !== 'function') return true;
-  const level = lr.getLevel();
-  if (!level || typeof level.getCollide !== 'function') return true;
-  const dx = targetPos.x - camera.pos.x;
-  const dy = targetPos.y - camera.pos.y;
-  const len = Math.sqrt(dx * dx + dy * dy);
-  if (len < 0.5) return true;
-  const step = 0.5;
-  const count = Math.min(80, Math.floor(len / step));
-  const ux = dx / len;
-  const uy = dy / len;
-  const probe = { x: 0, y: 0 };
-  for (let i = 1; i < count; i++) {
-    probe.x = camera.pos.x + ux * step * i;
-    probe.y = camera.pos.y + uy * step * i;
-    if (level.getCollide(probe) > 128) return false;
+function getEntityFog(camera, targetPos) {
+  const lr = state.LevelRender;
+  if (lr && lr.getWorldFog) {
+    return lr.getWorldFog(camera.pos, targetPos);
+  }
+  return 0;
+}
+
+// Видим бота только при наличии прямой видимости (как в schibir/instagib.io):
+// мобы за стенами полностью скрыты, а не просвечивают силуэтом/худом.
+function hasLineOfSightTo(camera, targetPos) {
+  const lr = state.LevelRender;
+  if (lr && lr.hasLineOfSight) {
+    return lr.hasLineOfSight(camera.pos, targetPos);
   }
   return true;
 }
@@ -512,7 +607,9 @@ function startMd2Loads() {
       const weapons = await ensureBodyWeapons(bodyDir);
       BotClient.md2Specs.push({ model, skinIndex, bodyDir, weapons });
     } catch (err) {
-      Console.warn('MD2 spec load failed: ' + entry.model + ' / ' + entry.skin + ': ' + err.message);
+      Console.warn(
+        'MD2 spec load failed: ' + entry.model + ' / ' + entry.skin + ': ' + err.message,
+      );
     }
   });
   startViewWeaponMd2Loads();
@@ -522,10 +619,10 @@ function startMd2Loads() {
 // Файлы лежат рядом с tris.md2: players/<body>/w_*.md2 в оригинальном baseq2.
 const Q2_WEAPON_FILES = {
   [WEAPON.PISTOL]: 'w_blaster.md2',
-  [WEAPON.SHAFT]:  'w_chaingun.md2',
-  [WEAPON.RAIL]:   'w_railgun.md2',
+  [WEAPON.SHAFT]: 'w_chaingun.md2',
+  [WEAPON.RAIL]: 'w_railgun.md2',
   [WEAPON.PLASMA]: 'w_hyperblaster.md2',
-  [WEAPON.ZENIT]:  'w_glauncher.md2',
+  [WEAPON.ZENIT]: 'w_glauncher.md2',
   [WEAPON.ROCKET]: 'w_rlauncher.md2',
 };
 
@@ -535,28 +632,52 @@ async function ensureBodyWeapons(bodyDir) {
   }
   const weapons = {};
   BotClient.weaponPerBody.set(bodyDir, weapons);
-  await Promise.all(Object.keys(Q2_WEAPON_FILES).map(async (key) => {
-    const file = Q2_WEAPON_FILES[key];
-    try {
-      const model = await MD2Model.load(bodyDir + file, []);
-      const skinIndex = model.addSkin(bodyDir + 'weapon.pcx');
-      weapons[key] = { model, skinIndex };
-    } catch (err) {
-      Console.warn('Q2 body-weapon load failed: ' + bodyDir + file + ': ' + err.message);
+
+  // Многие пользовательские модели игроков (sydney, massm, homer, ...) несут
+  // лишь один обобщённый weapon.md2 вместо набора w_*.md2. В этом случае
+  // используем его как fallback для всех типов оружия. Промис мемоизируется,
+  // чтобы параллельные загрузки делили один разбор файла.
+  let fallbackPromise = null;
+  const getFallback = () => {
+    if (!fallbackPromise) {
+      fallbackPromise = (async () => {
+        try {
+          const model = await MD2Model.load(bodyDir + 'weapon.md2', []);
+          return { model, skinIndex: model.addSkin(bodyDir + 'weapon.png') };
+        } catch {
+          return null;
+        }
+      })();
     }
-  }));
+    return fallbackPromise;
+  };
+
+  await Promise.all(
+    Object.keys(Q2_WEAPON_FILES).map(async (key) => {
+      const file = Q2_WEAPON_FILES[key];
+      try {
+        const model = await MD2Model.load(bodyDir + file, []);
+        const skinIndex = model.addSkin(bodyDir + 'weapon.png');
+        weapons[key] = { model, skinIndex };
+      } catch (err) {
+        const fb = await getFallback();
+        if (fb) weapons[key] = fb;
+        else Console.warn('Q2 body-weapon load failed: ' + bodyDir + file + ': ' + err.message);
+      }
+    }),
+  );
   return weapons;
 }
 
 // Оригинальные Quake 2 first-person view-модели (`item->view_model`).
 const Q2_VIEW_WEAPON_PATH = '/game/models/q2/viewweapons/';
 const Q2_VIEW_WEAPON_FILES = {
-  [WEAPON.PISTOL]: { model: 'blaster.md2',      skin: 'blaster.pcx' },
-  [WEAPON.SHAFT]:  { model: 'chaingun.md2',     skin: 'chaingun.pcx' },
-  [WEAPON.RAIL]:   { model: 'railgun.md2',      skin: 'railgun.pcx' },
-  [WEAPON.PLASMA]: { model: 'hyperblaster.md2', skin: 'hyperblaster.pcx' },
-  [WEAPON.ZENIT]:  { model: 'glauncher.md2',    skin: 'glauncher.pcx' },
-  [WEAPON.ROCKET]: { model: 'rlauncher.md2',    skin: 'rlauncher.pcx' },
+  [WEAPON.PISTOL]: { model: 'blaster.md2', skin: 'blaster.png' },
+  [WEAPON.SHAFT]: { model: 'chaingun.md2', skin: 'chaingun.png' },
+  [WEAPON.RAIL]: { model: 'railgun.md2', skin: 'railgun.png' },
+  [WEAPON.PLASMA]: { model: 'hyperblaster.md2', skin: 'hyperblaster.png' },
+  [WEAPON.ZENIT]: { model: 'glauncher.md2', skin: 'glauncher.png' },
+  [WEAPON.ROCKET]: { model: 'rlauncher.md2', skin: 'rlauncher.png' },
 };
 
 function startViewWeaponMd2Loads() {
@@ -603,7 +724,6 @@ function viewWeaponFrames(model, firing) {
   return model._viewAnimCache[key];
 }
 
-
 class BotClient {
   constructor(server_time, serverBot, isCamera) {
     this.id = serverBot.id;
@@ -642,6 +762,10 @@ class BotClient {
     this.life = serverBot.life;
     this.patrons = serverBot.patrons;
 
+    this.frag = serverBot.frag;
+    this.scores = serverBot.scores;
+    this.rank = serverBot.rank;
+
     if (isCamera) {
       if (serverBot.i_am_death) Event.emit('cl_death', this.id, serverBot.i_am_death);
       if (serverBot.i_am_kill && serverBot.i_am_kill !== this.id)
@@ -655,9 +779,6 @@ class BotClient {
       if (serverBot.i_am_quickdeath) Event.emit('cl_quickdeath');
       if (serverBot.i_am_telefraging) Event.emit('cl_telefraging');
       if (serverBot.i_am_telefraged) Event.emit('cl_telefraged');
-      this.frag = serverBot.frag;
-      this.scores = serverBot.scores;
-      this.rank = serverBot.rank;
     }
 
     const dir = Vector.sub(this.new_frame_dynent.pos, this.old_frame_dynent.pos);
@@ -697,14 +818,17 @@ class BotClient {
 
   render(camera) {
     if (this.dynent === camera) return;
+    const fog = getEntityFog(camera, this.dynent.pos);
+    if (fog > 0.92) return;
+    if (!hasLineOfSightTo(camera, this.dynent.pos)) return;
     if (!this.alive) {
       const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
       if (dt > CORPSE_LIFETIME_MS) return;
     }
     const spec = pickMD2Spec(this.id);
     if (!spec || !spec.model.ready()) return;
-    if (this.alive) drawFloorShadow(this);
-    renderBotMD2(camera, this, spec);
+    if (this.alive && fog < 0.85) drawFloorShadow(this);
+    renderBotMD2(camera, this, spec, fog);
   }
 
   renderStats(camera) {
@@ -724,13 +848,22 @@ class BotClient {
     const ny = cy / cw;
     if (nx < -1.0 || nx > 1.0 || ny < -1.0 || ny > 1.0) return;
     if (cw > 40) return;
-    if (!hasLineOfSight(camera, this.dynent.pos)) return;
+    const fog = getEntityFog(camera, this.dynent.pos);
+    if (fog > 0.92) return;
+    if (!hasLineOfSightTo(camera, this.dynent.pos)) return;
+
+    // Оверлеи учитывают туман (растворяются вдали) и освещение карты
+    // (тусклее в тёмных углах, ярче у факелов) — как сами мобы.
+    const lr = state.LevelRender;
+    const lum = lr && lr.getLightLevel ? lr.getLightLevel(this.dynent.pos.x, this.dynent.pos.y) : 1;
+    const light = Math.max(0.35, Math.min(1.15, lum));
+    const vis = Math.max(0, 1 - fog) * light;
 
     const nick = state.gameClient.getNickById(this.id);
-    state.text.render([nx, ny + 0.02], 2, nick, 1, { center: true, alpha: 2 });
+    state.text.render([nx, ny + 0.02], 2, nick, 1, { center: true, alpha: 2 * vis });
 
     const hp = Math.max(0, Math.min(1, this.health_ratio !== undefined ? this.health_ratio : 1));
-    drawHpBar(nx, ny - 0.03, 0.16, 0.012, hp);
+    drawHpBar(nx, ny - 0.03, 0.16, 0.012, hp, vis);
   }
 }
 
@@ -741,13 +874,11 @@ BotClient.isMutant = function (id) {
   return skin === 'vazovsky' || skin === 'lyaguha';
 };
 
-BotClient.ready = function () { return true; };
+BotClient.ready = function () {
+  return true;
+};
 
 BotClient.load = function () {
-  Console.addCommand('skins', 'all available skins', function () {
-    for (let i = 0; i < BotClient.skinnames.length; i++) Console.debug(BotClient.skinnames[i]);
-  });
-
   BotClient.snd_gib = new Sound('gib');
   BotClient.snd_respawn = new Sound('respawn');
   startMd2Loads();

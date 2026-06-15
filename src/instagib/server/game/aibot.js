@@ -7,12 +7,11 @@ import { itemForEach } from '../objects/item.js';
 
 import { ITEM, WEAPON } from './global.js';
 
-// Высота «глаз» стрелка и зоны прицеливания (согласованы с bullet.js hitZ).
+// Высота «глаз» стрелка и зона прицеливания (согласованы с bullet.js hitZ).
 const SHOOTER_EYE_Z = 1.4;
-const AIM_Z_HEAD = 1.78;
 const AIM_Z_CHEST = 1.25;
-const AIM_Z_STOMACH = 0.95;
-const AIM_Z_LEGS = 0.42;
+const AIM_Z_CHEST_JITTER = 0.07;
+const AIM_XY_SPREAD = 0.11;
 const PITCH_LIMIT = Math.PI * 0.45;
 
 class Forbidden {
@@ -94,34 +93,32 @@ class Aibot {
       self.owner.dynent.angle = normalizeAngle(self.owner.dynent.angle + (update_angle * dt) / 16);
       return delta;
     }
-    function pickAimZone(self)
-    {
+    function aimSpread(self) {
+      return 0.45 + (1 - self.accuracy) * 0.55;
+    }
+    function pickAimZone(self) {
       const now = Date.now();
       if (now < self.aim_z_until) return self.aim_z;
 
-      // Веса: чаще целятся в голову/грудь, иногда — в ноги/живот.
-      const roll = Math.random();
-      let z;
-      if (roll < 0.32) z = AIM_Z_HEAD;
-      else if (roll < 0.62) z = AIM_Z_CHEST;
-      else if (roll < 0.82) z = AIM_Z_STOMACH;
-      else z = AIM_Z_LEGS;
-
-      self.aim_z = z;
-      self.aim_z_until = now + 700 + ((Math.random() * 1300) | 0);
-      return z;
+      const spread = aimSpread(self);
+      self.aim_z = AIM_Z_CHEST + (Math.random() * 2 - 1) * AIM_Z_CHEST_JITTER * spread;
+      self.aim_z_until = now + 350 + ((Math.random() * 500) | 0);
+      return self.aim_z;
     }
-    function aimPitchTo(self, target2d, aimZ, koef)
-    {
+    function jitterTarget2d(self, pos) {
+      const spread = aimSpread(self);
+      const r = AIM_XY_SPREAD * spread;
+      return new Vector(pos.x + (Math.random() * 2 - 1) * r, pos.y + (Math.random() * 2 - 1) * r);
+    }
+    function aimPitchTo(self, target2d, aimZ, koef) {
       const horiz = Vector.sub(target2d, self.owner.dynent.pos).length();
-      if (horiz < 0.05)
-      {
+      if (horiz < 0.05) {
         self.owner.pitch = 0;
         return;
       }
 
       let targetPitch = Math.atan2(aimZ - SHOOTER_EYE_Z, horiz);
-      const spread = (1 - self.accuracy) * 0.14;
+      const spread = 0.035 + (1 - self.accuracy) * 0.055;
       targetPitch += (Math.random() * 2 - 1) * spread;
       targetPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, targetPitch));
 
@@ -133,11 +130,9 @@ class Aibot {
       if (updatePitch < -maxStep) updatePitch = -maxStep;
       self.owner.pitch = (self.owner.pitch || 0) + (updatePitch * dt) / 16;
     }
-    function decayPitch(self)
-    {
+    function decayPitch(self) {
       const p = self.owner.pitch || 0;
-      if (Math.abs(p) < 0.002)
-      {
+      if (Math.abs(p) < 0.002) {
         self.owner.pitch = 0;
         return;
       }
@@ -145,8 +140,7 @@ class Aibot {
       if (p > 0) self.owner.pitch = Math.max(0, p - step);
       else self.owner.pitch = Math.min(0, p + step);
     }
-    function aimAt(self, target2d, aimZ, koef)
-    {
+    function aimAt(self, target2d, aimZ, koef) {
       const delta = angleTo(self, target2d, koef);
       aimPitchTo(self, target2d, aimZ, koef);
       return delta;
@@ -548,11 +542,11 @@ class Aibot {
         break;
       }
       case Aibot.STATE_HEAD_POINT: {
-        aimAt(this, this.point_head, AIM_Z_HEAD, 0.75);
+        aimAt(this, jitterTarget2d(this, this.point_head), pickAimZone(this), 0.75);
         break;
       }
       case Aibot.STATE_HEAD_SHOOTED: {
-        let delta = aimAt(this, this.point_head, AIM_Z_HEAD);
+        let delta = aimAt(this, jitterTarget2d(this, this.point_head), pickAimZone(this));
         if (Math.abs(delta) < Math.PI / 12) {
           if (this.waypoint_next || this.waypoint_master)
             this.state_head = Aibot.STATE_HEAD_SMOOTH_WAYPOINT;
@@ -581,7 +575,7 @@ class Aibot {
         }
 
         const aimZ = pickAimZone(this);
-        let delta_angle = aimAt(this, bot_pos, aimZ, this.angle_speed * 3);
+        let delta_angle = aimAt(this, jitterTarget2d(this, bot_pos), aimZ, this.angle_speed * 3);
         let need_shoot = false;
         if (this.owner.weapon.type === WEAPON.SHAFT) {
           need_shoot = delta_angle > -0.32 && delta_angle < 0.22;

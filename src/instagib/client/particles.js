@@ -137,12 +137,7 @@ Event.on('cl_botrespawn', function (pos) {
 });
 
 Event.on('cl_botpain', function (pos, dir, id) {
-  Particle.create(
-    state.Bot.isMutant(id) ? Particle.BLOOD_GREEN : Particle.BLOOD_RED,
-    pos,
-    dir,
-    1,
-  );
+  Particle.create(state.Bot.isMutant(id) ? Particle.BLOOD_GREEN : Particle.BLOOD_RED, pos, dir, 1);
 });
 
 Event.on('cl_botdead', function (pos, dir, id) {
@@ -174,20 +169,32 @@ Event.on('cl_bulletlinecollide', function (bullet, dest, norm_dir) {
   }
 });
 
+// Видна ли точка для камеры (не за стеной). Звук/декаль рисуем всегда —
+// прячем только видимый спрайт взрыва.
+function explosionVisible(pos) {
+  const cam = state.gameClient && state.gameClient.getCamera ? state.gameClient.getCamera() : null;
+  const lr = state.LevelRender;
+  if (!cam || !cam.dynent || !lr || !lr.hasLineOfSight) return true;
+  return lr.hasLineOfSight(cam.dynent.pos, pos);
+}
+
 Event.on('cl_bulletdead', function (bullet) {
   if (bullet.type == WEAPON.PLASMA) {
     let level = state.gameClient.getLevelRender().getLevel();
     if (level.collideLava(bullet.dynent.pos) && !level.getCollideBridges(bullet.dynent.pos)) {
-      Particle.create(Particle.SPLASH_LAVA_SMALL, bullet.dynent.pos, null, 1);
+      if (explosionVisible(bullet.dynent.pos))
+        Particle.create(Particle.SPLASH_LAVA_SMALL, bullet.dynent.pos, null, 1);
       //guano
     } else {
       let isQuad = bullet.power === ITEM.QUAD;
-      Particle.create(
-        isQuad ? Particle.EXPLODE_PLASMA_QUAD : Particle.EXPLODE_PLASMA,
-        bullet.dynent.pos,
-        null,
-        1,
-      );
+      if (explosionVisible(bullet.dynent.pos)) {
+        Particle.create(
+          isQuad ? Particle.EXPLODE_PLASMA_QUAD : Particle.EXPLODE_PLASMA,
+          bullet.dynent.pos,
+          null,
+          1,
+        );
+      }
       state.Decal.render_decal(
         {
           pos: bullet.dynent.pos,
@@ -197,12 +204,13 @@ Event.on('cl_bulletdead', function (bullet) {
           size: isQuad ? new Vector(1.5, 1.5) : new Vector(1, 1),
         },
         state.Weapon.tex_decal,
-        [0.2, 0.2, 0.2, 1],
+        [0, 0, 0, 1],
       );
       state.Weapon.snd_grenade.play(bullet.dynent.pos);
     }
   } else if (bullet.type == WEAPON.ROCKET) {
-    Particle.create(Particle.EXPLODE_ROCKET, bullet.dynent.pos, null, 1);
+    if (explosionVisible(bullet.dynent.pos))
+      Particle.create(Particle.EXPLODE_ROCKET, bullet.dynent.pos, null, 1);
     state.Decal.render_decal(
       {
         pos: bullet.dynent.pos,
@@ -212,7 +220,7 @@ Event.on('cl_bulletdead', function (bullet) {
         size: new Vector(3, 3),
       },
       state.Weapon.tex_decal,
-      [0.2, 0.2, 0.2, 1],
+      [0, 0, 0, 1],
     );
     state.Weapon.snd_explode.play(bullet.dynent.pos);
   }
@@ -221,11 +229,7 @@ Event.on('cl_bulletdead', function (bullet) {
 // static methods
 
 Particle.ready = function () {
-  return (
-    Particle.tex_explode.ready() &&
-    Particle.tex_respawn.ready() &&
-    Particle.tex_blood.ready()
-  );
+  return Particle.tex_explode.ready() && Particle.tex_respawn.ready() && Particle.tex_blood.ready();
 };
 
 Particle.load = function () {
@@ -321,21 +325,25 @@ Particle.load = function () {
   Particle.splash_textures = create_splash();
 
   //type — биты выбраны так, чтобы группы (BLOOD/SPLASH/EXPLODE) объединялись через `|`.
-  Particle.EXPLODE_ROCKET      = 1;
-  Particle.EXPLODE_PLASMA      = 2;
+  Particle.EXPLODE_ROCKET = 1;
+  Particle.EXPLODE_PLASMA = 2;
   Particle.EXPLODE_PLASMA_QUAD = 4096 * 2;
-  Particle.EXPLODE             = Particle.EXPLODE_ROCKET | Particle.EXPLODE_PLASMA | Particle.EXPLODE_PLASMA_QUAD;
-  Particle.RESPAWN             = 8;
-  Particle.BLOOD_RED           = 16;
-  Particle.BLOOD_GREEN         = 32;
-  Particle.BLOOD               = Particle.BLOOD_RED | Particle.BLOOD_GREEN;
-  Particle.BLOOD_DEAD_RED      = 64;
-  Particle.BLOOD_DEAD_GREEN    = 128;
-  Particle.SPLASH_LAVA         = 256;
-  Particle.SPLASH_LAVA_SMALL   = 512;
-  Particle.SPLASH              = Particle.BLOOD_DEAD_RED | Particle.BLOOD_DEAD_GREEN
-                               | Particle.SPLASH_LAVA | Particle.SPLASH_LAVA_SMALL;
-  Particle.SPARK               = 4096;
+  Particle.EXPLODE =
+    Particle.EXPLODE_ROCKET | Particle.EXPLODE_PLASMA | Particle.EXPLODE_PLASMA_QUAD;
+  Particle.RESPAWN = 8;
+  Particle.BLOOD_RED = 16;
+  Particle.BLOOD_GREEN = 32;
+  Particle.BLOOD = Particle.BLOOD_RED | Particle.BLOOD_GREEN;
+  Particle.BLOOD_DEAD_RED = 64;
+  Particle.BLOOD_DEAD_GREEN = 128;
+  Particle.SPLASH_LAVA = 256;
+  Particle.SPLASH_LAVA_SMALL = 512;
+  Particle.SPLASH =
+    Particle.BLOOD_DEAD_RED |
+    Particle.BLOOD_DEAD_GREEN |
+    Particle.SPLASH_LAVA |
+    Particle.SPLASH_LAVA_SMALL;
+  Particle.SPARK = 4096;
 
   Particle.PARTICLE_LAYER_0 = Particle.SPARK;
   Particle.PARTICLE_LAYER_1 = Particle.RESPAWN | Particle.BLOOD | Particle.SPLASH;
@@ -343,7 +351,7 @@ Particle.load = function () {
 
   Particle.tex_explode = new Texture('/game/textures/fx/particles/explode.png');
   Particle.tex_respawn = new Texture('/game/textures/fx/particles/respawn.png');
-  Particle.tex_blood   = new Texture('/game/textures/fx/particles/blood.png');
+  Particle.tex_blood = new Texture('/game/textures/fx/particles/blood.png');
 
   Particle.particles = [];
 
@@ -376,14 +384,21 @@ Particle.load = function () {
     \n\
     uniform sampler2D tex;\n\
     uniform sampler2D tex_visible;\n\
+    uniform vec4 fog_uv;\n\
     varying vec4 texcoord;\n\
     varying vec4 koef;\n\
     \n\
     void main()\n\
     {\n\
         vec4 col = texture2D(tex, texcoord.xy);\n\
-        vec4 visible = texture2D(tex_visible, texcoord.zw);\n\
-        col *= 1.0 - visible.r;\n\
+        if (fog_uv.z > 0.5) {\n\
+            float mapFog = texture2D(tex_visible, fog_uv.xy).r;\n\
+            mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);\n\
+            float fog = clamp(max(mapFog, fog_uv.w), 0.0, 1.0);\n\
+            vec3 fogCol = vec3(0.012, 0.018, 0.032);\n\
+            col.rgb = mix(col.rgb, fogCol, fog * 0.92);\n\
+            col.a *= (1.0 - fog * 0.95);\n\
+        }\n\
         col.a = (col.r + col.g + col.b) * 0.33;\n\
         gl_FragColor = mix(col, col.grba * 2.0, koef.r);\n\
     }\n';
@@ -399,23 +414,47 @@ Particle.load = function () {
     uniform sampler2D tex_visible;\n\
     uniform vec4 color;\n\
     uniform vec4 koef;\n\
+    uniform vec4 fog_uv;\n\
     varying vec4 texcoord;\n\
     \n\
     void main()\n\
     {\n\
         vec4 col = texture2D(tex, texcoord.xy);\n\
-        vec4 visible = texture2D(tex_visible, texcoord.zw);\n\
         col = (clamp(col.gggg, koef.x, koef.y) - koef.w) * koef.z;\n\
-        col *= 1.0 - visible.r;\n\
+        if (fog_uv.z > 0.5) {\n\
+            float mapFog = texture2D(tex_visible, fog_uv.xy).r;\n\
+            mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);\n\
+            float fog = clamp(max(mapFog, fog_uv.w), 0.0, 1.0);\n\
+            vec3 fogCol = vec3(0.012, 0.018, 0.032);\n\
+            col.rgb = mix(col.rgb, fogCol, fog * 0.92);\n\
+            col.a *= (1.0 - fog * 0.95);\n\
+        }\n\
         gl_FragColor = col * color;\n\
     }\n';
 
-  Particle.shader_explode = new Shader(vert_explode, frag_explode,
-    ['mat_pos', 'dtc', 'tex', 'tex_visible']);
-  Particle.shader_respawn = new Shader(vert_explode, state.Weapon.frag_noshadow_color,
-    ['mat_pos', 'dtc', 'tex', 'tex_visible', 'color']);
-  Particle.shader_blood = new Shader(vert, frag_blood,
-    ['mat_pos', 'tex', 'tex_visible', 'color', 'koef']);
+  Particle.shader_explode = new Shader(vert_explode, frag_explode, [
+    'mat_pos',
+    'dtc',
+    'tex',
+    'tex_visible',
+    'fog_uv',
+  ]);
+  Particle.shader_respawn = new Shader(vert_explode, state.Weapon.frag_noshadow_color, [
+    'mat_pos',
+    'dtc',
+    'tex',
+    'tex_visible',
+    'color',
+    'fog_uv',
+  ]);
+  Particle.shader_blood = new Shader(vert, frag_blood, [
+    'mat_pos',
+    'tex',
+    'tex_visible',
+    'color',
+    'koef',
+    'fog_uv',
+  ]);
 };
 
 //dir - Vector

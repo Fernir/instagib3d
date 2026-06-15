@@ -2,8 +2,6 @@ import { Shader } from '../engine/shader.js';
 import { Texture } from '../engine/texture.js';
 import { state } from '../runtime-state.js';
 
-import { decodePcx } from './pcx.js';
-
 const MD2_IDENT = 844121161; // "IDP2"
 const MD2_VERSION = 8;
 const MD2_HEADER_INTS = 17;
@@ -273,9 +271,11 @@ function makeShader() {
 
     uniform sampler2D tex;
     uniform sampler2D tex_lightmap;
+    uniform sampler2D tex_visible;
     uniform vec4 color;
     uniform vec4 light_dir;       // xyz = sun dir в мировых координатах, w = use_directional
     uniform vec4 lightmap_params; // x = 1/level_size, y = use_lightmap
+    uniform vec4 fog_params;      // x = 1/level_size, y = use_fog, z = dist_fog, w = unused
     uniform vec4 world_ref;       // xyz = override world-pos для лайтинга, w = use_flag
     varying vec2 v_uv;
     varying vec3 v_world_pos;
@@ -318,13 +318,35 @@ function makeShader() {
 
         // Динамические лайты (снаряды, вспышки).
         light += accum_dyn_lights(wp, v_normal_lerp);
+        light = max(light, vec3(0.32));
 
-        gl_FragColor = vec4(col.rgb * light, col.a);
+        vec3 lit = col.rgb * light;
+        if (fog_params.y > 0.5) {
+            vec2 fuv = vec2(wp.x * fog_params.x, 1.0 - wp.z * fog_params.x);
+            float mapFog = texture2D(tex_visible, fuv).r;
+            mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);
+            float fog = clamp(max(mapFog, fog_params.z), 0.0, 1.0);
+            vec3 fogCol = vec3(0.012, 0.018, 0.032);
+            lit = mix(lit, fogCol, fog * 0.92);
+            col.a *= (1.0 - fog * 0.96);
+        }
+        if (col.a < 0.03) discard;
+        gl_FragColor = vec4(lit, col.a);
     }`;
 
   return new Shader(vert, frag, [
-    'mat_pos', 'mat_model', 'lerp', 'tex', 'color', 'light_dir',
-    'tex_lightmap', 'lightmap_params', 'world_ref', 'dyn_light_count',
+    'mat_pos',
+    'mat_model',
+    'lerp',
+    'tex',
+    'color',
+    'light_dir',
+    'tex_lightmap',
+    'lightmap_params',
+    'tex_visible',
+    'fog_params',
+    'world_ref',
+    'dyn_light_count',
   ]);
 }
 
@@ -369,8 +391,7 @@ function getFallbackSkinId() {
   gl.bindTexture(gl.TEXTURE_2D, id);
   // 2×2 серый «металл» с лёгкой вариацией яркости — даёт хоть какой-то материал.
   const data = new Uint8Array([
-    160, 160, 168, 255,   140, 140, 150, 255,
-    150, 150, 160, 255,   170, 170, 180, 255,
+    160, 160, 168, 255, 140, 140, 150, 255, 150, 150, 160, 255, 170, 170, 180, 255,
   ]);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -382,26 +403,6 @@ function getFallbackSkinId() {
 }
 
 async function fetchSkin(url) {
-  const lower = url.toLowerCase();
-  if (lower.endsWith('.pcx')) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to load skin ${url}`);
-    const decoded = decodePcx(await res.arrayBuffer());
-    const gl = state.gl;
-    const id = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, id);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.RGBA,
-      decoded.width, decoded.height, 0,
-      gl.RGBA, gl.UNSIGNED_BYTE, decoded.rgba,
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    return { id, ready: () => true, ext: 'pcx' };
-  }
   const gl = state.gl;
   const tex = new Texture(url, { wrap: gl.CLAMP_TO_EDGE });
   return { ready: () => tex.ready(), id: null, texture: tex, ext: 'image' };
@@ -440,9 +441,11 @@ class MD2Model {
   addSkin(url) {
     const slot = { ready: () => false, id: null };
     this.skins.push(slot);
-    fetchSkin(url).then((loaded) => {
-      Object.assign(slot, loaded);
-    }).catch(() => {});
+    fetchSkin(url)
+      .then((loaded) => {
+        Object.assign(slot, loaded);
+      })
+      .catch(() => {});
     return this.skins.length - 1;
   }
 
@@ -495,11 +498,12 @@ class MD2Model {
 
     const prevCull = gl.isEnabled(gl.CULL_FACE);
     const prevBlend = gl.isEnabled(gl.BLEND);
+    const prevDepthMask = gl.getParameter(gl.DEPTH_WRITEMASK);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.FRONT);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE);
-    gl.depthMask(false);
+    gl.depthMask(true);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[a]);
     gl.enableVertexAttribArray(0);
@@ -516,6 +520,7 @@ class MD2Model {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     if (!prevBlend) gl.disable(gl.BLEND);
     if (!prevCull) gl.disable(gl.CULL_FACE);
+    gl.depthMask(prevDepthMask);
 
     if (state.quadBuffer) {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
@@ -557,7 +562,10 @@ class MD2Model {
 
     if (lightCtx && lightCtx.sunDir && shader.light_dir) {
       shader.vector(shader.light_dir, [
-        lightCtx.sunDir[0], lightCtx.sunDir[1], lightCtx.sunDir[2], 1.0,
+        lightCtx.sunDir[0],
+        lightCtx.sunDir[1],
+        lightCtx.sunDir[2],
+        1.0,
       ]);
     } else if (shader.light_dir) {
       shader.vector(shader.light_dir, [0, -1, 0, 0]);
@@ -586,6 +594,11 @@ class MD2Model {
       gl.uniform1i(shader.dyn_light_count, 0);
     }
 
+    // Туман войны отключён — модели не затемняются картой видимости.
+    if (shader.fog_params) {
+      shader.vector(shader.fog_params, [0, 0, 0, 0]);
+    }
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[a]);
     gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
 
@@ -610,7 +623,7 @@ class MD2Model {
   static async load(modelUrl, skinUrls) {
     const md2 = await MD2.load(modelUrl);
     const model = new MD2Model(md2);
-    const list = Array.isArray(skinUrls) ? skinUrls : (skinUrls ? [skinUrls] : []);
+    const list = Array.isArray(skinUrls) ? skinUrls : skinUrls ? [skinUrls] : [];
     list.forEach((url) => model.addSkin(url));
     return model;
   }
@@ -618,4 +631,4 @@ class MD2Model {
 
 MD2.Model = MD2Model;
 
-export { MD2, MD2Model, parseMd2 };
+export { MD2Model };

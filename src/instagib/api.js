@@ -32,8 +32,17 @@ export async function getGameApi() {
   ]);
 
   return {
-    Console, Event, Vector, normalizeAngle,
-    GameClient, Text, Item, HUD, Particle, Sound, Q2FX,
+    Console,
+    Event,
+    Vector,
+    normalizeAngle,
+    GameClient,
+    Text,
+    Item,
+    HUD,
+    Particle,
+    Sound,
+    Q2FX,
     Weapon: WeaponClient,
     Bot: BotClient,
   };
