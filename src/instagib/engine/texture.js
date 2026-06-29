@@ -6,14 +6,17 @@ class Texture {
     let gl = state.gl;
     let id = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, id);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
     let filter = gl.LINEAR;
     let wrap = gl.REPEAT;
+    let flipY = true;
     if (param) {
       if (param.filter) filter = param.filter;
       if (param.wrap) wrap = param.wrap;
+      if (param.flipY === false) flipY = false;
     }
+
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY);
 
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
@@ -26,6 +29,7 @@ class Texture {
       image.onload = function () {
         let gl2 = state.gl;
         gl2.bindTexture(gl2.TEXTURE_2D, id);
+        gl2.pixelStorei(gl2.UNPACK_FLIP_Y_WEBGL, flipY);
         gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.RGBA, gl2.RGBA, gl2.UNSIGNED_BYTE, image);
         loaded = true;
         if (callback) callback();
@@ -39,6 +43,7 @@ class Texture {
       assert(img instanceof Uint8Array);
       assert(param.size !== undefined);
       gl.bindTexture(gl.TEXTURE_2D, id);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY);
       gl.texImage2D(
         gl.TEXTURE_2D,
         0,

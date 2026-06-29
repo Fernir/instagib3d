@@ -96,9 +96,6 @@ class Particle {
   }
 }
 
-Event.on('cl_botrespawn', function (pos) {
-  Particle.create(Particle.RESPAWN, pos, null, 1);
-});
 
 Event.on('cl_botdead', function (pos) {
   // Кровь — Q2FX.bloodBurst (3D) + лужа в decal.js; здесь только лавовый всплеск.

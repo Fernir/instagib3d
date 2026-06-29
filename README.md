@@ -18,21 +18,11 @@ pnpm dev
 
 Opens http://localhost:3000. Other scripts: `build`, `preview`, `lint`, `format`, `test`.
 
-## URL parameters
-
-All optional:
-
-- `nick` — player name
-- `seed` — map seed
-- `size_class` — map size `0`…`2`
-- `room` — private multiplayer room code
-- `solo` — offline play against bots
-
 ## Multiplayer
 
 Multiplayer is peer-to-peer over WebRTC (PeerJS for signaling), so there's no backend.
-Opening the site puts you in a shared global room; add `?room=code` for a private match
-or `?solo` to play offline.
+By default the game runs offline against bots. Set `VITE_PEER_DEFAULT_MP=true` at build
+time to join a shared global room when a signaling server is configured (`VITE_PEER_HOST`).
 
 The first player in a room is the host and runs the authoritative game; others join
 automatically. If the host leaves, the remaining players re-elect a new host and the

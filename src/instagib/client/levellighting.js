@@ -84,6 +84,7 @@ export class LevelLighting {
     this.activeCount = 0;
 
     const lightmapRes = Math.min(1024, Math.max(256, size * 8));
+    this.lightmapInvSize = 1 / lightmapRes;
     this.lightmap = new Framebuffer(lightmapRes, lightmapRes);
     this.shader = new Shader(VERT_LIGHTMAP_PAINT, FRAG_LIGHTMAP_PAINT, ['quad', 'color']);
     this.bakeStaticLightmap();

@@ -332,6 +332,9 @@ function setEvent(view, offset, event) {
       offset += 2;
       view.setUint16(offset, event.arg1);
       offset += 2;
+    } else if (event.type === EVENT.BOT_RESPAWN) {
+      view.setUint16(offset, event.arg1);
+      offset += 2;
     } else if (event.type === EVENT.BULLET_RESPAWN) {
       let bullet = event.arg1;
       let val = bullet.type | (bullet.owner.power << 4) | (event.arg2 ? 0x08 : 0);
@@ -407,6 +410,9 @@ function getEvent(view, offset, event) {
       let dy = toFloat(view.getInt16(offset), 50 * 256);
       offset += 2;
       event.dir = new Vector(dx, dy);
+      event.botid = view.getUint16(offset);
+      offset += 2;
+    } else if (event.type === EVENT.BOT_RESPAWN) {
       event.botid = view.getUint16(offset);
       offset += 2;
     } else if (event.type === EVENT.BULLET_RESPAWN) {

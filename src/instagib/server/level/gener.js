@@ -4,6 +4,25 @@ import { Vector } from '../libs/vector.js';
 
 import { Bridges } from './bridges.js';
 
+// Обрезка только у самого края карты (размытие лавы), не на всю полосу board_size.
+function maskMapEdge(buf, worldSize, edgeWidth, borderVal) {
+  const texSize = buf.getSize();
+  const koef = texSize / worldSize;
+  buf.for_each(function (val, x, y) {
+    const wx = x / koef;
+    const wy = y / koef;
+    if (
+      wx < edgeWidth ||
+      wy < edgeWidth ||
+      wx >= worldSize - edgeWidth ||
+      wy >= worldSize - edgeWidth
+    )
+      return borderVal;
+    return val;
+  });
+  return buf;
+}
+
 class RiverGeneration {
   constructor(size_class, seed) {
     Console.assert(size_class === 0 || size_class === 1 || size_class === 2);
@@ -100,6 +119,12 @@ class LevelGeneration {
     });
 
     let river = new RiverGeneration(size_class, seed);
+    const lava_edge_clip = 2;
+    maskMapEdge(river.raw_river, my_size, lava_edge_clip, 0);
+    maskMapEdge(river.river_blured, my_size, lava_edge_clip, 0);
+    maskMapEdge(river.blured_level_river, my_size, lava_edge_clip, 0);
+    maskMapEdge(river.blured_velocity_x, my_size, lava_edge_clip, 0.5);
+    maskMapEdge(river.blured_velocity_y, my_size, lava_edge_clip, 0.5);
 
     raw_level.for_buf(river.river_blured, function (a, b) {
       return b > 0 ? 0 : a;
@@ -122,6 +147,9 @@ class LevelGeneration {
       })
       .filter(0)
       .fill_isolated_area();
+    raw_level.for_buf(border, function (a, b) {
+      return Math.max(a, b);
+    });
 
     //create level
     let level = new Buffer(my_size * 2);

@@ -1,3 +1,4 @@
+import { drawDepthPrepass, drawWireLines, isWireframe } from '../engine/mesh.js';
 import { Shader } from '../engine/shader.js';
 import { Texture } from '../engine/texture.js';
 import { state } from '../runtime-state.js';
@@ -163,13 +164,15 @@ function parseMd2(buffer) {
     });
   }
 
+  const glCommands = parseGlCommands(view, header.ofs_glcmds, header.ofs_end);
+
   return {
     header,
     skins,
     texcoords,
     triangles,
     frames,
-    glCommands: parseGlCommands(view, header.ofs_glcmds, header.ofs_end),
+    glCommands,
   };
 }
 
@@ -184,6 +187,8 @@ class MD2 {
 MD2.parse = parseMd2;
 
 let cachedShader = null;
+let cachedShaderVer = 0;
+const MD2_SHADER_VER = 4;
 const MD2_MAX_LIGHTS = 8;
 
 const MD2_LIGHTS_GLSL = `
@@ -296,7 +301,7 @@ function makeShader() {
     uniform vec4 color;
     uniform vec4 light_dir;       // xyz = sun dir в мировых координатах, w = use_directional
     uniform vec4 lightmap_params; // x = 1/level_size, y = use_lightmap
-    uniform vec4 fog_params;      // x = 1/level_size, y = use_fog, z = dist_fog, w = unused
+    uniform vec4 fog_params;      // x = 1/level_size, y = use_map_fog, z = dist_fog, w = dist_only
     uniform vec4 world_ref;       // xyz = override world-pos для лайтинга, w = use_flag
     varying vec2 v_uv;
     varying vec3 v_world_pos;
@@ -342,14 +347,18 @@ function makeShader() {
         light = max(light, vec3(0.32));
 
         vec3 lit = col.rgb * light;
-        if (fog_params.y > 0.5) {
+        float fogAmt = 0.0;
+        if (fog_params.w > 0.5) {
+            fogAmt = clamp(fog_params.z, 0.0, 1.0);
+        } else if (fog_params.y > 0.5) {
             vec2 fuv = vec2(wp.x * fog_params.x, 1.0 - wp.z * fog_params.x);
             float mapFog = texture2D(tex_visible, fuv).r;
             mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);
-            float fog = clamp(max(mapFog, fog_params.z), 0.0, 1.0);
+            fogAmt = clamp(max(mapFog, fog_params.z), 0.0, 1.0);
+        }
+        if (fogAmt > 0.001) {
             vec3 fogCol = vec3(0.012, 0.018, 0.032);
-            lit = mix(lit, fogCol, fog * 0.92);
-            col.a *= (1.0 - fog * 0.96);
+            lit = mix(lit, fogCol, fogAmt * 0.96);
         }
         if (col.a < 0.03) discard;
         gl_FragColor = vec4(lit, col.a);
@@ -371,34 +380,75 @@ function makeShader() {
   ]);
 }
 
-function expandFrame(md2, frameIndex) {
-  const frame = md2.frames[frameIndex];
-  const vertices = new Float32Array(md2.triangles.length * 9);
-  let out = 0;
-  for (let t = 0; t < md2.triangles.length; t++) {
-    const tri = md2.triangles[t];
-    for (let i = 0; i < 3; i++) {
-      const vi = tri.vertexIndices[i] * 3;
-      // Q2 frame layout: X=forward, Y=side, Z=up.
-      // Engine: X=right, Y=up, Z=south. Bot yaw=0 looks toward -Z, so map Q2 +X to engine -Z.
-      vertices[out++] = frame.vertices[vi + 1];
-      vertices[out++] = frame.vertices[vi + 2];
-      vertices[out++] = -frame.vertices[vi];
+function buildGlcmdTopology(md2) {
+  const corners = [];
+  const pushTri = (a, b, c, verts) => {
+    for (const i of [a, b, c]) {
+      const v = verts[i];
+      corners.push({ vi: v.index, u: v.s, v: v.t });
     }
+  };
+
+  for (const cmd of md2.glCommands) {
+    const verts = cmd.vertices;
+    if (cmd.mode === 'strip') {
+      for (let i = 0; i < verts.length - 2; i++) {
+        if (i % 2 === 0) pushTri(i, i + 1, i + 2, verts);
+        else pushTri(i, i + 2, i + 1, verts);
+      }
+    } else {
+      for (let i = 1; i < verts.length - 1; i++) {
+        pushTri(0, i, i + 1, verts);
+      }
+    }
+  }
+  return corners;
+}
+
+function mapMd2Vertex(frame, vi) {
+  const o = vi * 3;
+  // Q2 frame layout: X=forward, Y=side, Z=up.
+  // Engine: X=right, Y=up, Z=south. Bot yaw=0 looks toward -Z, so map Q2 +X to engine -Z.
+  return [frame.vertices[o + 1], frame.vertices[o + 2], -frame.vertices[o]];
+}
+
+// Screen-space winding: CCW front face (matches gl.cullFace(BACK)).
+function triFrontFacing(p0, p1, p2, mvp, invert) {
+  const proj = (p) => {
+    const x = mvp[0] * p[0] + mvp[4] * p[1] + mvp[8] * p[2] + mvp[12];
+    const y = mvp[1] * p[0] + mvp[5] * p[1] + mvp[9] * p[2] + mvp[13];
+    const w = mvp[3] * p[0] + mvp[7] * p[1] + mvp[11] * p[2] + mvp[15];
+    if (Math.abs(w) < 1e-5) return null;
+    return [x / w, y / w];
+  };
+  const a = proj(p0);
+  const b = proj(p1);
+  const c = proj(p2);
+  if (!a || !b || !c) return !invert;
+  const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  return invert ? cross < 0 : cross > 0;
+}
+
+function expandFrame(md2, frameIndex, topology) {
+  const frame = md2.frames[frameIndex];
+  const vertices = new Float32Array(topology.length * 3);
+  let out = 0;
+  for (let i = 0; i < topology.length; i++) {
+    const p = mapMd2Vertex(frame, topology[i].vi);
+    vertices[out++] = p[0];
+    vertices[out++] = p[1];
+    vertices[out++] = p[2];
   }
   return vertices;
 }
 
-function expandTexcoords(md2) {
-  const texcoords = new Float32Array(md2.triangles.length * 6);
+function expandTexcoords(topology) {
+  const texcoords = new Float32Array(topology.length * 2);
   let out = 0;
-  for (let t = 0; t < md2.triangles.length; t++) {
-    const tri = md2.triangles[t];
-    for (let i = 0; i < 3; i++) {
-      const uv = md2.texcoords[tri.texcoordIndices[i]];
-      texcoords[out++] = uv ? uv.u : 0;
-      texcoords[out++] = uv ? uv.v : 0;
-    }
+  for (let i = 0; i < topology.length; i++) {
+    texcoords[out++] = topology[i].u;
+    // glcmds — те же UV, что st/skin (как в коммите до правок); скин с UNPACK_FLIP_Y.
+    texcoords[out++] = topology[i].v;
   }
   return texcoords;
 }
@@ -433,8 +483,13 @@ class MD2Model {
   constructor(md2) {
     const gl = state.gl;
     this.md2 = md2;
-    this.vertexCount = md2.triangles.length * 3;
-    this.shader = cachedShader || (cachedShader = makeShader());
+    this.topology = buildGlcmdTopology(md2);
+    this.vertexCount = this.topology.length;
+    if (!cachedShader || cachedShaderVer !== MD2_SHADER_VER) {
+      cachedShader = makeShader();
+      cachedShaderVer = MD2_SHADER_VER;
+    }
+    this.shader = cachedShader;
     this.nextLocation = this.shader.attrib('position_next');
     this.uvLocation = this.shader.attrib('texuv');
     // Кешируем uniform-локации массивов лайтов (вызываются каждый кадр на каждом боте).
@@ -444,13 +499,13 @@ class MD2Model {
     this.frameBuffers = md2.frames.map((_, index) => {
       const buffer = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, expandFrame(md2, index), gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, expandFrame(md2, index, this.topology), gl.STATIC_DRAW);
       return buffer;
     });
 
     this.texcoordBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, expandTexcoords(md2), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, expandTexcoords(this.topology), gl.STATIC_DRAW);
 
     this.skins = [];
     this.frameLookup = new Map();
@@ -585,6 +640,10 @@ class MD2Model {
   }
 
   render(modelMatrix, frameA, frameB, lerp, skinIndex, color, lightCtx) {
+    if (isWireframe()) {
+      this.renderWire(modelMatrix, frameA, frameB, lerp, color);
+      return;
+    }
     const texId = this.skinTextureId(skinIndex || 0);
     if (texId === null || !this.frameBuffers.length) return;
 
@@ -605,7 +664,6 @@ class MD2Model {
     shader.vector(shader.color, color || [1, 1, 1, 1]);
     shader.texture(shader.tex, texId, 0);
 
-    const flat = !!(lightCtx && lightCtx.flat);
     const worldRef = lightCtx && lightCtx.worldRef;
 
     if (shader.world_ref) {
@@ -628,10 +686,8 @@ class MD2Model {
     }
 
     // Запечённая lightmap (статические факелы) — без лимита по числу источников.
-    // Для view-weapon (flat=true) отключаем: иначе оружие красится по координатам
-    // камеры из лайтмапа уровня и текстура выглядит «грязной».
     const lr = state.LevelRender;
-    const lmId = !flat && lr && lr.getLightmapTexId ? lr.getLightmapTexId() : null;
+    const lmId = lr && lr.getLightmapTexId ? lr.getLightmapTexId() : null;
     const invSize = lr && lr.getLevelInvSize ? lr.getLevelInvSize() : 0;
     if (lmId && shader.tex_lightmap && shader.lightmap_params) {
       shader.texture(shader.tex_lightmap, lmId, 1);
@@ -640,8 +696,8 @@ class MD2Model {
       shader.vector(shader.lightmap_params, [0, 0, 0, 0]);
     }
 
-    // Активные динамические лайты (снаряды + вспышки). View-weapon тоже без них.
-    const lights = !flat && lr && lr.getActiveLights ? lr.getActiveLights() : null;
+    // Активные динамические лайты (снаряды + вспышки).
+    const lights = lr && lr.getActiveLights ? lr.getActiveLights() : null;
     if (lights) {
       gl.uniform1i(shader.dyn_light_count, lights.count);
       if (this.lightPosLoc) gl.uniform4fv(this.lightPosLoc, lights.pos);
@@ -650,9 +706,14 @@ class MD2Model {
       gl.uniform1i(shader.dyn_light_count, 0);
     }
 
-    // Туман войны отключён — модели не затемняются картой видимости.
+    const distFog =
+      lightCtx && lightCtx.distFog ? Math.min(1, Math.max(0, lightCtx.distFog)) : 0;
     if (shader.fog_params) {
-      shader.vector(shader.fog_params, [0, 0, 0, 0]);
+      if (distFog > 0.001) {
+        shader.vector(shader.fog_params, [0, 0, distFog, 1]);
+      } else {
+        shader.vector(shader.fog_params, [0, 0, 0, 0]);
+      }
     }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[a]);
@@ -674,6 +735,113 @@ class MD2Model {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     }
+  }
+
+  renderWireDepth(modelMatrix, frameA, frameB, lerp, cullFront) {
+    if (!this.frameBuffers.length) return;
+    const gl = state.gl;
+    const mat4 = state.mat4;
+    const last = this.frameBuffers.length - 1;
+    const a = Math.max(0, Math.min(last, frameA | 0));
+    const b = Math.max(0, Math.min(last, frameB | 0));
+    const mix = Math.max(0, Math.min(1, lerp || 0));
+    const matPos = mat4.create();
+    mat4.multiply(matPos, state.viewProj3D, modelMatrix);
+    const shader = cachedDepthShader || (cachedDepthShader = makeDepthShader());
+    const nextLoc = shader.attrib('position_next');
+    shader.use();
+    shader.matrix(shader.mat_pos, matPos);
+    shader.vector(shader.lerp, [mix, 0, 0, 0]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[a]);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(nextLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[b]);
+    gl.vertexAttribPointer(nextLoc, 3, gl.FLOAT, false, 0, 0);
+    const prevCull = gl.isEnabled(gl.CULL_FACE);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(cullFront ? gl.FRONT : gl.BACK);
+    drawDepthPrepass(() => gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount));
+    gl.disableVertexAttribArray(nextLoc);
+    if (!prevCull) gl.disable(gl.CULL_FACE);
+    else gl.cullFace(gl.BACK);
+    if (state.quadBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    }
+  }
+
+  renderWireDraw(modelMatrix, frameA, frameB, lerp, color, depthTest, cullFront) {
+    if (!this.frameBuffers.length) return;
+    const gl = state.gl;
+    const mat4 = state.mat4;
+    const last = this.frameBuffers.length - 1;
+    const a = Math.max(0, Math.min(last, frameA | 0));
+    const b = Math.max(0, Math.min(last, frameB | 0));
+    const mix = Math.max(0, Math.min(1, lerp || 0));
+
+    const lineCap = this.vertexCount * 6;
+    if (!this.wireLineBuffer) {
+      this.wireLineFloats = new Float32Array(lineCap);
+      this.wireLineBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.wireLineBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, this.wireLineFloats, gl.DYNAMIC_DRAW);
+    }
+
+    const fa = this.md2.frames[a];
+    const fb = this.md2.frames[b];
+    const posAt = (slot) => {
+      const vi = this.topology[slot].vi;
+      const p0 = mapMd2Vertex(fa, vi);
+      if (mix <= 0.001) return p0;
+      const p1 = mapMd2Vertex(fb, vi);
+      return [
+        p0[0] + (p1[0] - p0[0]) * mix,
+        p0[1] + (p1[1] - p0[1]) * mix,
+        p0[2] + (p1[2] - p0[2]) * mix,
+      ];
+    };
+
+    const matPos = mat4.create();
+    mat4.multiply(matPos, state.viewProj3D, modelMatrix);
+    const invert = !!cullFront;
+    const out = this.wireLineFloats;
+    let o = 0;
+    const pushEdge = (sa, sb) => {
+      const pa = posAt(sa);
+      const pb = posAt(sb);
+      out[o++] = pa[0];
+      out[o++] = pa[1];
+      out[o++] = pa[2];
+      out[o++] = pb[0];
+      out[o++] = pb[1];
+      out[o++] = pb[2];
+    };
+
+    for (let tri = 0; tri + 2 < this.vertexCount; tri += 3) {
+      const p0 = posAt(tri);
+      const p1 = posAt(tri + 1);
+      const p2 = posAt(tri + 2);
+      if (!triFrontFacing(p0, p1, p2, matPos, invert)) continue;
+      pushEdge(tri, tri + 1);
+      pushEdge(tri + 1, tri + 2);
+      pushEdge(tri + 2, tri);
+    }
+
+    if (o === 0) return;
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.wireLineBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, out.subarray(0, o));
+    drawWireLines(this.wireLineBuffer, o / 3, color || [0.85, 0.95, 1.0, 1], matPos, 0.0012, depthTest);
+    if (state.quadBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    }
+  }
+
+  renderWire(modelMatrix, frameA, frameB, lerp, color) {
+    this.renderWireDepth(modelMatrix, frameA, frameB, lerp);
+    this.renderWireDraw(modelMatrix, frameA, frameB, lerp, color);
   }
 
   static async load(modelUrl, skinUrls) {

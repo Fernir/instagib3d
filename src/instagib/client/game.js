@@ -1,3 +1,4 @@
+import { isWireframe } from '../engine/mesh.js';
 import { Shader } from '../engine/shader.js';
 import { Console } from '../polyfill.js';
 import { state } from '../runtime-state.js';
@@ -10,6 +11,7 @@ import { Room } from '../server/room.js';
 import { BotClient } from './bot.js';
 import { FakeSocketClient } from './fakesocket.js';
 import { LevelRender } from './level.js';
+import { SpawnFx } from './spawnfx.js';
 
 class GameClient {
   constructor(param) {
@@ -87,7 +89,9 @@ class GameClient {
       socket = param.netSocket;
     } else if (param.mode === 'host' || (local !== undefined && local === 'true')) {
       if (state.localRoom) state.localRoom.destroy();
-      room = new Room(42, 2, 'local');
+      const seed = parseInt(param.seed, 10) || 42;
+      const sizeClass = parseInt(param.size_class, 10) || 0;
+      room = new Room(seed, sizeClass, 'local');
       if (param.scoreState && room.getGame().restoreScoreState)
         room.getGame().restoreScoreState(param.scoreState);
       state.localRoom = room;
@@ -132,14 +136,54 @@ class GameClient {
       if (!bot) return;
       if (bot.alive) bot.deathStartTime = Date.now();
       bot.alive = false;
+      bot.spawnStartTime = 0;
+      bot.painStartTime = 0;
+      bot.painKickX = 0;
+      bot.painKickY = 0;
+      bot.deathSlideX = 0;
+      bot.deathSlideY = 0;
       if (pos) {
         bot.dynent.pos.x = pos.x;
         bot.dynent.pos.y = pos.y;
+        if (bot.new_frame_dynent) {
+          bot.new_frame_dynent.pos.x = pos.x;
+          bot.new_frame_dynent.pos.y = pos.y;
+        }
+        if (bot.old_frame_dynent) {
+          bot.old_frame_dynent.pos.x = pos.x;
+          bot.old_frame_dynent.pos.y = pos.y;
+        }
+      }
+      if (dir) {
+        const len = dir.length();
+        if (len > 1e-8) {
+          const mag = Math.min(2.5, 0.5 + len * 140);
+          bot.deathSlideX = (dir.x / len) * mag;
+          bot.deathSlideY = (dir.y / len) * mag;
+        }
+      }
+    });
+
+    Event.on('cl_botrespawn', function (pos, botid) {
+      const bot = allbots[botid];
+      if (bot) {
+        bot.spawnStartTime = Date.now();
+        bot.deathStartTime = 0;
+        bot.painStartTime = 0;
+        bot.painKickX = 0;
+        bot.painKickY = 0;
+        bot.deathSlideX = 0;
+        bot.deathSlideY = 0;
+        if (pos) {
+          bot.dynent.pos.x = pos.x;
+          bot.dynent.pos.y = pos.y;
+        }
       }
     });
 
     // Quake-style direct weapon selection: keys 1..6 pick weapons PISTOL..ROCKET.
     Event.on('keydown', function (key) {
+      if (Console.show) return;
       if (!playing || !transport) return;
       if (typeof key !== 'string' || key.length !== 1) return;
       const digit = key.charCodeAt(0) - 48; // '0'..'9'
@@ -165,6 +209,12 @@ class GameClient {
       state.godMode = !state.godMode;
       state.godNick = state.godMode ? nick : null;
       Console.info('God mode ' + (state.godMode ? 'ON' : 'OFF'));
+    });
+    Console.addCommand('wire', 'toggle 3D wireframe (on/off/toggle)', function (val) {
+      if (val === 'on' || val === '1' || val === 'true') state.wireframe = true;
+      else if (val === 'off' || val === '0' || val === 'false') state.wireframe = false;
+      else state.wireframe = !state.wireframe;
+      Console.info('Wireframe ' + (state.wireframe ? 'ON' : 'OFF'));
     });
     Console.addCommand('trafik', 'Average trafik (byte per package)', function () {
       Console.info((state.stats.memory_all_package / state.stats.count_net_package) | 0);
@@ -200,6 +250,7 @@ class GameClient {
     };
     this.handlePlayClick = function () {
       if (playing || !transport) return false;
+      state.unlockAudio?.();
       playing = true;
       state.playing = true;
       state.godMode = false;
@@ -387,10 +438,10 @@ class GameClient {
       }
 
       // Удерживаем «пропавших» ботов: короткий пропуск visibility (250 мс) сглаживает блинк,
-      // а свежий труп остаётся лежать 3 секунды.
+      // а свежий труп остаётся лежать до исчезновения (см. CORPSE_LIFETIME_MS в bot.js).
       const now = Date.now();
       const GHOST_VISIBILITY_MS = 250;
-      const CORPSE_LINGER_MS = 5000;
+      const CORPSE_LINGER_MS = 14000;
       for (const idStr in allbots) {
         const id = +idStr;
         if (seenIds.has(id)) continue;
@@ -434,7 +485,7 @@ class GameClient {
         frameevents.forEach((event) => {
           switch (event.type) {
             case EVENT.BOT_RESPAWN:
-              return Event.emit('cl_botrespawn', event.pos);
+              return Event.emit('cl_botrespawn', event.pos, event.botid);
             case EVENT.PAIN:
               return Event.emit('cl_botpain', event.pos, event.dir, event.botid);
             case EVENT.BOT_DEAD:
@@ -486,27 +537,55 @@ class GameClient {
         });
       }
 
+      state.wireframePass = state.wireframe;
       levelRender.render(mybot.dynent);
 
       if (state.Q2FX) state.Q2FX.update();
 
       levelRender.beginSpritePass();
-      state.gl.enable(state.gl.BLEND);
-      state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
 
-      state.Particle.render(mybot.dynent, 0);
-      frameitems.forEach(function (item) {
-        state.Item.render(mybot.dynent, item);
-      });
-      framebots.forEach(function (bot) {
-        bot.render(mybot.dynent);
-      });
-      state.BulletClient.render(mybot.dynent);
-      state.Particle.render(mybot.dynent, 1);
-      state.Particle.render(mybot.dynent, 2);
-      if (state.Q2FX) state.Q2FX.render(mybot.dynent);
+      if (isWireframe()) {
+        state.gl.disable(state.gl.BLEND);
+        frameitems.forEach(function (item) {
+          state.Item.renderWireDepth(mybot.dynent, item);
+        });
+        framebots.forEach(function (bot) {
+          bot.renderWireDepth(mybot.dynent);
+        });
+        if (state.Bot && state.Bot.renderFirstPersonWeaponWire) {
+          state.Bot.renderFirstPersonWeaponWire(mybot, 'depth');
+        }
+        levelRender.drawLevelWire();
+        frameitems.forEach(function (item) {
+          state.Item.renderWireDraw(mybot.dynent, item);
+        });
+        framebots.forEach(function (bot) {
+          bot.renderWireDraw(mybot.dynent);
+        });
+      } else {
+        state.gl.enable(state.gl.BLEND);
+        state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
 
-      if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
+        state.Particle.render(mybot.dynent, 0);
+        frameitems.forEach(function (item) {
+          state.Item.render(mybot.dynent, item);
+        });
+        SpawnFx.render(mybot.dynent, 'floor');
+        framebots.forEach(function (bot) {
+          bot.render(mybot.dynent);
+        });
+        SpawnFx.render(mybot.dynent, 'pillar');
+        state.BulletClient.render(mybot.dynent);
+        state.Particle.render(mybot.dynent, 1);
+        state.Particle.render(mybot.dynent, 2);
+        if (state.Q2FX) state.Q2FX.render(mybot.dynent);
+
+        if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
+      }
+
+      if (state.Bot && state.Bot.renderFirstPersonWeapon) {
+        state.Bot.renderFirstPersonWeapon(mybot);
+      }
 
       state.gl.disable(state.gl.BLEND);
       levelRender.endSpritePass();
@@ -515,14 +594,11 @@ class GameClient {
         bot.renderStats(mybot.dynent);
       });
 
-      if (state.Bot && state.Bot.renderFirstPersonWeapon) state.Bot.renderFirstPersonWeapon(mybot);
-
+      state.wireframePass = false;
       levelRender.renderMinimap(mybot.dynent);
       state.HUD.render(mybot, table, playing);
       if (!playing) self.renderPlayOverlay();
       else state.text.render([0, 0], 3, '#w+', 1, { center: true, visibile: true });
-
-      Console.render();
     };
 
     if (socket.connect) socket.connect();

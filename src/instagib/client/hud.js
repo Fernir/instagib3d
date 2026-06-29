@@ -89,6 +89,7 @@ HUD.addAchievement = function (type, str, prior) {
 };
 
 Event.on('keydown', function (key) {
+  if (Console.show) return;
   if (key === Console.TAB) HUD.showtable = !HUD.showtable;
 });
 

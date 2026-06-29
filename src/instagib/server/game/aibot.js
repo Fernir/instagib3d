@@ -146,6 +146,10 @@ class Aibot {
       return delta;
     }
     function findItem(self) {
+      if (game.isShowcaseBot(self.owner)) {
+        self.item = null;
+        return false;
+      }
       let my_pos = self.owner.dynent.pos;
       let finded = false;
       let min_dir = 256 * 256;
@@ -282,11 +286,11 @@ class Aibot {
         let my_pos = self.owner.dynent.pos;
         self.point = Vector.add(my_pos, Vector.sub(my_pos, self.danger_pos).normalize());
         self.state_move = Aibot.STATE_MOVE_TO_POINT_SAFE;
+      } else if (bot_finded) {
+        self.state_move = Aibot.STATE_ATTACK;
       } else if (item_finded) {
         self.point = new Vector(self.item.dynent.pos);
         self.state_move = Aibot.STATE_MOVE_TO_POINT;
-      } else if (bot_finded) {
-        self.state_move = Aibot.STATE_ATTACK;
       }
 
       if (bot_finded) {
@@ -420,6 +424,11 @@ class Aibot {
     }
 
     let ai_update = false;
+    const showcase = game.isShowcaseBot(this.owner);
+    if (showcase) {
+      this.reaction_time = Math.min(this.reaction_time, 200);
+      this.accuracy = Math.max(this.accuracy, 0.7);
+    }
     if (Date.now() > this.reaction) {
       ai_update = true;
       this.reaction = Date.now() + this.reaction_time;
@@ -435,14 +444,25 @@ class Aibot {
         break;
       }
       case Aibot.STATE_FIND_MASTER: {
-        this.state_move = Aibot.STATE_MOVE_GRADIENT;
-        this.state_head = Aibot.STATE_HEAD_FRONT;
-        let ways = AI.getVisibleWaypoint(this.owner.dynent);
-        if (ways.length > 0) {
-          let id = (Math.random() * ways.length) | 0;
-          resetMaster(this, ways[id]);
-        } else if (ai_update) {
-          findObject(this);
+        if (showcase && findBot(this)) {
+          this.state = Aibot.STATE_CHECK_OBJECT;
+          this.state_move = Aibot.STATE_ATTACK;
+          this.bot_point = {
+            pos: new Vector(this.bot.dynent.pos),
+            vel: new Vector(this.bot.dynent.vel),
+            time: Date.now(),
+          };
+          this.state_head = Aibot.STATE_HEAD_BOT;
+        } else {
+          this.state_move = Aibot.STATE_MOVE_GRADIENT;
+          this.state_head = Aibot.STATE_HEAD_FRONT;
+          let ways = AI.getVisibleWaypoint(this.owner.dynent);
+          if (ways.length > 0) {
+            let id = (Math.random() * ways.length) | 0;
+            resetMaster(this, ways[id]);
+          } else if (ai_update) {
+            findObject(this);
+          }
         }
         break;
       }
@@ -655,6 +675,12 @@ class Aibot {
 }
 
 Event.on('botrespawn', function (bot) {
+  if (bot.game && bot.game.isShowcaseBot(bot) && bot.weapon) {
+    for (let t = WEAPON.PISTOL; t <= WEAPON.ROCKET; t++) {
+      bot.weapon.patrons[t] = WEAPON.wea_tabl[t].patrons;
+    }
+    bot.weapon.set(WEAPON.ROCKET);
+  }
   if (bot.ai) {
     bot.ai.state = Aibot.STATE_AFTER_RESPAWN;
     bot.ai.state_move = Aibot.STATE_MOVE_STAY;

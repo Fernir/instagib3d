@@ -3,10 +3,11 @@ import { createInstagibRuntime } from './runtime.js';
 
 let runtime = null;
 
-// Everyone joins a shared room only when ?mp or ?room= is set. Default is solo
-// (no signaling WebSocket). Use ?room=CODE for a private match.
 const GLOBAL_ROOM = 'instagib3d-global';
 const SCORE_STATE_PREFIX = 'instagib3d:score-state:';
+const DEFAULT_NICK = 'player';
+const DEFAULT_SEED = '42';
+const DEFAULT_SIZE_CLASS = '0';
 
 let migrating = false;
 
@@ -34,64 +35,45 @@ function loadScoreState(roomCode) {
 }
 
 async function getParams() {
-  const params = new URLSearchParams(window.location.search);
-  const addr = params.get('addr');
-  const room = params.get('room');
+  const nick = DEFAULT_NICK;
+  const seed = DEFAULT_SEED;
+  const sizeClass = DEFAULT_SIZE_CLASS;
   const env = typeof import.meta !== 'undefined' ? import.meta.env : {};
   const peerDefaultMp = env.VITE_PEER_DEFAULT_MP === 'true';
-  const multiplayer = params.has('mp') || room !== null || (peerDefaultMp && hasPeerSignaling());
-  const solo = params.has('solo') || addr === 'local' || !multiplayer;
-  const nick = params.get('nick') || 'player';
-  const seed = params.get('seed') || '42';
-  const sizeClass = params.get('size_class') || '0';
+  const solo = !peerDefaultMp || !hasPeerSignaling();
 
-  // Legacy dedicated WebSocket server.
-  if (!solo && addr && addr !== 'local') {
-    return { nick, local: 'false', addr, seed, size_class: sizeClass };
-  }
-
-  // P2P multiplayer: ?mp / ?room= / VITE_PEER_DEFAULT_MP. Signaling via your
-  // own PeerServer (see docker-compose.yml) — not 0.peerjs.com.
   if (!solo) {
-    if (!hasPeerSignaling()) {
-      console.warn(
-        'Multiplayer needs a signaling server. Deploy peerjs-server (docker-compose.yml) ' +
-          'and set VITE_PEER_HOST, or add ?peer_host=YOUR_SERVER&mp to the URL.',
-      );
-    } else {
-      const roomCode = room || GLOBAL_ROOM;
-      const scoreStorageKey = getScoreStorageKey(roomCode);
-      try {
-        const session = await setupPeerSession(roomCode);
-        if (session.role === 'join') {
-          return {
-            nick,
-            mode: 'join',
-            netSocket: session.socket,
-            seed,
-            size_class: sizeClass,
-            scoreStorageKey,
-            // Host left: re-run the election (one of the remaining players claims
-            // the room code and becomes the new host, the rest re-join). A clean
-            // reload guarantees no stale game/event state survives the handoff.
-            onConnectionLost: onHostLost,
-          };
-        }
+    const roomCode = GLOBAL_ROOM;
+    const scoreStorageKey = getScoreStorageKey(roomCode);
+    try {
+      const session = await setupPeerSession(roomCode);
+      if (session.role === 'join') {
         return {
           nick,
-          mode: 'host',
-          local: 'true',
-          addr: 'local',
-          attachHost: session.attach,
+          mode: 'join',
+          netSocket: session.socket,
           seed,
           size_class: sizeClass,
           scoreStorageKey,
-          scoreState: loadScoreState(roomCode),
+          // Host left: re-run the election (one of the remaining players claims
+          // the room code and becomes the new host, the rest re-join). A clean
+          // reload guarantees no stale game/event state survives the handoff.
+          onConnectionLost: onHostLost,
         };
-      } catch (e) {
-        // Fall back to a local game if signaling fails.
-        console.error('P2P session failed, starting local game instead:', e);
       }
+      return {
+        nick,
+        mode: 'host',
+        local: 'true',
+        addr: 'local',
+        attachHost: session.attach,
+        seed,
+        size_class: sizeClass,
+        scoreStorageKey,
+        scoreState: loadScoreState(roomCode),
+      };
+    } catch (e) {
+      console.error('P2P session failed, starting local game instead:', e);
     }
   }
 

@@ -184,6 +184,16 @@ describe('transport event codec', () => {
     expect(decoded.z).toBeCloseTo(1.375, 10);
   });
 
+  it('round-trips bot respawn events with bot id', () => {
+    const event = new GameEvent(EVENT.BOT_RESPAWN, [6.5, 9.25], null, 17);
+    const decoded = encodeDecodeEvent(event);
+
+    expect(decoded.type).toBe(EVENT.BOT_RESPAWN);
+    expect(decoded.pos.x).toBeCloseTo(6.5, 10);
+    expect(decoded.pos.y).toBeCloseTo(9.25, 10);
+    expect(decoded.botid).toBe(17);
+  });
+
   it('round-trips bullet respawn events with type, power, pitch and z', () => {
     const bullet = {
       id: 111,

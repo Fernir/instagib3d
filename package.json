@@ -8,7 +8,7 @@
     "dev": "vite",
     "dev:mp": "pnpm peer:serve & vite",
     "peer:serve": "peerjs --port 9000 --path /peerjs",
-    "build": "vite build",
+    "build": "node scripts/gen-pickup-glyphs.mjs && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -23,12 +23,14 @@
     "peerjs": "^1.5.5"
   },
   "devDependencies": {
+    "earcut": "^3.1.1",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-node": "^0.4.0",
     "eslint-plugin-import": "^2.29.0",
     "eslint-plugin-sonarjs": "^4.0.3",
     "globals": "^15.0.0",
+    "opentype.js": "^2.0.0",
     "peer": "^1.0.2",
     "prettier": "^3.3.0",
     "sass": "^1.81.0",

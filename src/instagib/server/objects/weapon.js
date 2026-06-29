@@ -148,7 +148,12 @@ Weapon.update = function (game) {
           let len = Vector.sub(bullet.dynent.pos, bot.dynent.pos).length();
           let damage = (1 - len / WEAPON.RADIUS_ROCKET) * WEAPON.wea_tabl[bullet.type].damage;
           if (damage > 0) {
-            bot.pain(damage, bullet.owner, { pos: bullet.dynent.pos, type: bullet.type });
+            bot.pain(damage, bullet.owner, {
+              pos: bullet.dynent.pos,
+              vel: bullet.dynent.vel,
+              norm_dir: bullet.norm_dir,
+              type: bullet.type,
+            });
           }
         }
       }

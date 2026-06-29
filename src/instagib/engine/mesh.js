@@ -1,6 +1,94 @@
 import { state } from '../runtime-state.js';
 
-// Построение и привязка статических мешей уровня.
+import { Shader } from './shader.js';
+
+let wireShader = null;
+
+function ensureWireShader() {
+  if (wireShader) return wireShader;
+  const vert =
+    'attribute vec4 position;\nuniform mat4 mat_pos;\nuniform vec4 u_bias;\nvoid main(){ vec4 c = mat_pos * vec4(position.xyz, 1.0); c.z -= u_bias.x * c.w; gl_Position = c; }';
+  const frag =
+    '#ifdef GL_ES\nprecision highp float;\n#endif\nuniform vec4 u_color;\nvoid main(){ gl_FragColor = u_color; }';
+  wireShader = new Shader(vert, frag, ['mat_pos', 'u_color', 'u_bias']);
+  return wireShader;
+}
+
+function isWireframe() {
+  return !!(state.wireframe && state.wireframePass);
+}
+
+function buildWireLineBuffer(vertices, stride) {
+  const edges = new Set();
+  const lines = [];
+  const vertCount = vertices.length / stride;
+  const posKey = (idx) => {
+    const o = idx * stride;
+    return (
+      vertices[o].toFixed(4) +
+      ',' +
+      vertices[o + 1].toFixed(4) +
+      ',' +
+      vertices[o + 2].toFixed(4)
+    );
+  };
+  const pushEdge = (ia, ib) => {
+    const ka = posKey(ia);
+    const kb = posKey(ib);
+    const k = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+    if (edges.has(k)) return;
+    edges.add(k);
+    const oa = ia * stride;
+    const ob = ib * stride;
+    lines.push(vertices[oa], vertices[oa + 1], vertices[oa + 2]);
+    lines.push(vertices[ob], vertices[ob + 1], vertices[ob + 2]);
+  };
+  for (let i = 0; i + 2 < vertCount; i += 3) {
+    pushEdge(i, i + 1);
+    pushEdge(i + 1, i + 2);
+    pushEdge(i + 2, i);
+  }
+  return { data: new Float32Array(lines), count: lines.length / 3 };
+}
+
+function drawDepthPrepass(drawFn, forceWrite) {
+  const gl = state.gl;
+  const prevDepthMask = gl.getParameter(gl.DEPTH_WRITEMASK);
+  const prevDepthTest = gl.isEnabled(gl.DEPTH_TEST);
+  if (forceWrite) gl.disable(gl.DEPTH_TEST);
+  else {
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+  }
+  gl.depthMask(true);
+  gl.colorMask(false, false, false, false);
+  drawFn();
+  gl.colorMask(true, true, true, true);
+  gl.depthMask(prevDepthMask);
+  if (prevDepthTest) gl.enable(gl.DEPTH_TEST);
+  else gl.disable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+}
+
+function drawWireLines(lineBuffer, lineVertCount, color, mvp, depthBias, depthTest) {
+  if (!lineBuffer || !lineVertCount) return;
+  const gl = state.gl;
+  const sh = ensureWireShader();
+  sh.use();
+  sh.matrix(sh.mat_pos, mvp || state.viewProj3D);
+  sh.vector(sh.u_color, color || [0.85, 0.95, 1.0, 1]);
+  sh.vector(sh.u_bias, [depthBias || 0, 0, 0, 0]);
+  gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  if (depthTest !== false) {
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+  } else gl.disable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  gl.drawArrays(gl.LINES, 0, lineVertCount);
+}
+
 //
 // Раскладка вершины (во float):
 //   позиция(3) | uv(2) | нормаль(3) | [атлас-uv стены(2)]
@@ -89,6 +177,17 @@ class Mesh {
       return;
     }
     const gl = state.gl;
+    const wire = buildWireLineBuffer(vertices, stride);
+    if (wire.count > 0) {
+      this.wireBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.wireBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, wire.data, gl.STATIC_DRAW);
+      this.wireCount = wire.count;
+    } else {
+      this.wireBuffer = null;
+      this.wireCount = 0;
+    }
+
     this.buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
@@ -124,9 +223,27 @@ class Mesh {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   }
 
+  drawDepthPrepass() {
+    if (!this.count || !isWireframe()) return;
+    const gl = state.gl;
+    drawDepthPrepass(() => gl.drawArrays(gl.TRIANGLES, 0, this.count));
+  }
+
+  drawWire() {
+    if (!this.count || !isWireframe()) return;
+    if (this.wireCount) drawWireLines(this.wireBuffer, this.wireCount);
+  }
+
   draw() {
     if (!this.count) return;
     const gl = state.gl;
+    if (isWireframe()) {
+      this.drawDepthPrepass();
+      this.drawWire();
+      return;
+    }
     gl.drawArrays(gl.TRIANGLES, 0, this.count);
   }
 }
+
+export { buildWireLineBuffer, drawDepthPrepass, drawWireLines, isWireframe };

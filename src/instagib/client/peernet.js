@@ -8,24 +8,8 @@ const CONN_OPTS = { serialization: 'none', reliable: true };
 const PEER_CFG_STORAGE = 'instagib3d:peer-config';
 
 // PeerJS cloud (0.peerjs.com) is blocked in some regions — never use it.
-// Signaling server priority: URL params → sessionStorage → VITE_* env →
-// localhost dev proxy (/peerjs → :9000 via vite.config.js).
-function readPeerParams() {
-  const params = new URLSearchParams(window.location.search);
-  const host = params.get('peer_host');
-  if (!host) return null;
-  const port = params.get('peer_port');
-  const path = params.get('peer_path');
-  const secure = params.get('peer_secure');
-  return {
-    host: host,
-    port: port ? parseInt(port, 10) : secure === '0' ? 80 : 443,
-    path: path || '/peerjs',
-    secure: secure !== '0',
-    key: params.get('peer_key') || 'peerjs',
-  };
-}
-
+// Signaling server priority: sessionStorage → VITE_* env → localhost dev proxy
+// (/peerjs → :9000 via vite.config.js).
 function readStoredPeerConfig() {
   try {
     const raw = window.sessionStorage.getItem(PEER_CFG_STORAGE);
@@ -35,21 +19,7 @@ function readStoredPeerConfig() {
   }
 }
 
-function storePeerConfig(cfg) {
-  try {
-    window.sessionStorage.setItem(PEER_CFG_STORAGE, JSON.stringify(cfg));
-  } catch {
-    /* ignore */
-  }
-}
-
 function getPeerConfig() {
-  const fromUrl = readPeerParams();
-  if (fromUrl) {
-    storePeerConfig(fromUrl);
-    return fromUrl;
-  }
-
   const stored = readStoredPeerConfig();
   if (stored && stored.host) return stored;
 
@@ -80,7 +50,7 @@ function getPeerConfig() {
   return null;
 }
 
-// True when a signaling broker is configured (env, URL, storage, or dev proxy).
+// True when a signaling broker is configured (env, storage, or dev proxy).
 function hasPeerSignaling() {
   return getPeerConfig() !== null;
 }
@@ -220,8 +190,7 @@ function setupPeerSession(roomCode) {
   if (!peerCfg) {
     return Promise.reject(
       new Error(
-        'No signaling server configured. Set VITE_PEER_HOST at build time, ' +
-          'or open with ?peer_host=your-server.com&mp',
+        'No signaling server configured. Set VITE_PEER_HOST at build time.',
       ),
     );
   }

@@ -31,7 +31,7 @@ function makeBot(id) {
 }
 
 function kill(killer, victim, bullet) {
-  Event.emit('botdead', victim, killer, bullet, false);
+  Event.emit('botdead', victim, killer, bullet);
 }
 
 describe('gameplay._E (Elo expectation)', () => {

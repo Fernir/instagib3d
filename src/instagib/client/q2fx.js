@@ -175,16 +175,6 @@ function eyeH() {
   return (state.LevelRender && state.LevelRender.eye_height) || 1.6;
 }
 
-function fogFromPlayer(wx, wz) {
-  if (!is3D()) return 0;
-  const lr = state.LevelRender;
-  const gc = state.gameClient;
-  if (!lr || !lr.getWorldFog || !gc) return 0;
-  const cam = gc.getCamera && gc.getCamera();
-  if (!cam) return 0;
-  return lr.getWorldFog(cam.dynent.pos, { x: wx, y: wz });
-}
-
 function losFromPlayer(wx, wz) {
   if (!is3D()) return true;
   const lr = state.LevelRender;
@@ -196,7 +186,7 @@ function losFromPlayer(wx, wz) {
 }
 
 function visibleFromPlayer(wx, wz) {
-  return fogFromPlayer(wx, wz) < 0.88 && losFromPlayer(wx, wz);
+  return losFromPlayer(wx, wz);
 }
 
 Q2FX.spawn = function (opts) {

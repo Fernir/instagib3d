@@ -97,7 +97,7 @@ export class VolumetricFog {
   constructor(size) {
     const gl = state.gl;
     this.size = size;
-    this.SLICES = 16;
+    this.SLICES = 8;
     this.NEAR = 1.5;
     this.FAR = 28.0;
 

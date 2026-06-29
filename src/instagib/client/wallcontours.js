@@ -9,12 +9,12 @@ function sampleWallField(groundMap, mapCells, gx, gy) {
   return groundMap.getData(gx, gy);
 }
 
-function wallEdgePoint(mapScale, edge, gx, gy, v00, v10, v01, v11) {
+function wallEdgePoint(mapScale, edge, gx, gy, v00, v10, v01, v11, iso = 0.5) {
   const wx = (coord) => coord / mapScale;
   const wz = (coord) => coord / mapScale;
   function lerpIso(va, vb, x0, z0, x1, z1) {
     const denom = vb - va;
-    const t = Math.abs(denom) < 1e-6 ? 0.5 : (0.5 - va) / denom;
+    const t = Math.abs(denom) < 1e-6 ? 0.5 : (iso - va) / denom;
     return [x0 + (x1 - x0) * t, z0 + (z1 - z0) * t];
   }
   switch (edge) {

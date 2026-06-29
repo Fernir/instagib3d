@@ -110,7 +110,7 @@ Event.on('botrespawn', function (bot) {
   bot.stats.respawntime = Date.now();
 });
 
-Event.on('botdead', function (bot, killer, bullet, _isLava) {
+Event.on('botdead', function (bot, killer, bullet) {
   bot.stats.i_am_death = killer.id;
   killer.stats.i_am_kill = bot.id;
   if (bot === killer) {

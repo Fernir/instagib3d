@@ -129,14 +129,22 @@ class Bullet {
           if (!hitZ(z_at)) continue;
 
           if (type === WEAPON.RAIL) {
-            bot.pain(WEAPON.wea_tabl[type].damage, owner, { pos: dest, type: type });
+            bot.pain(WEAPON.wea_tabl[type].damage, owner, {
+              pos: dest,
+              type: type,
+              norm_dir: norm_dir,
+            });
             continue;
           }
 
           let nap = Vector.mul(dist, t);
           dest = Vector.add(pos, nap);
           let power = owner.power === ITEM.QUAD ? WEAPON.ROCKET + 1 : 0;
-          bot.pain(WEAPON.wea_tabl[type + power].damage, owner, { pos: dest, type: type });
+          bot.pain(WEAPON.wea_tabl[type + power].damage, owner, {
+            pos: dest,
+            type: type,
+            norm_dir: norm_dir,
+          });
           break;
         }
       }
@@ -154,6 +162,7 @@ class Bullet {
         bot_for_shaft.pain(WEAPON.wea_tabl[type + power].damage * WEAPON.FRAME_DELTA_TIME, owner, {
           pos: dest,
           type: WEAPON.SHAFT,
+          norm_dir: norm_dir,
         });
       } else {
         this.nap = Vector.sub(dest, pos);
@@ -228,6 +237,7 @@ class Bullet {
           bot.pain(damage, this.owner, {
             pos: this.dynent.pos,
             vel: this.dynent.vel,
+            norm_dir: this.norm_dir,
             type: this.type,
           });
           return false;

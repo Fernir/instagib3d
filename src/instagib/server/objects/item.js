@@ -24,6 +24,7 @@ class Item {
 
       let dir = bot.dynent.collide(this.dynent, this.dynent.size.x);
       if (dir !== null) {
+        if (this.game.isShowcaseBot && this.game.isShowcaseBot(bot)) continue;
         if (this.type <= WEAPON.ROCKET) {
           Event.emit('takeweapon', bot, this.type, this.val);
         } else if (this.type === ITEM.LIFE) {
@@ -43,8 +44,7 @@ class Item {
   }
 }
 
-Event.on('botdead', function (bot, opponent, bullet, isLava) {
-  if (isLava) return;
+Event.on('botdead', function (bot) {
   if (bot.weapon.type === WEAPON.PISTOL) return;
 
   let patrons = bot.weapon.patrons[bot.weapon.type];

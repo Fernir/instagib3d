@@ -18,6 +18,8 @@ export const state = {
   audioUnlocked: false,
   godMode: false,
   godNick: null,
+  wireframe: false,
+  wireframePass: false,
   localRoom: null,
   playing: false,
   // Нормализованные координаты курсора в overlay-режиме (когда state.playing=false

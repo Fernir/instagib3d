@@ -98,6 +98,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     }
     setAudioUnlocked(true);
   }
+  state.unlockAudio = unlockAudio;
 
   function bindVisibility() {
     document.addEventListener('visibilitychange', () => {
@@ -111,7 +112,6 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   function startAssetLoads() {
     if (assetsStarted) return;
     assetsStarted = true;
-    unlockAudio();
     Sound.setup();
     updateAudioMute();
     Item.load();
@@ -168,16 +168,29 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     return true;
   }
 
+  function isConsoleToggleKey(event) {
+    return (
+      event.code === Console.TILDA_CODE ||
+      event.key === Console.TILDA_MAC ||
+      event.key === Console.TILDA_WIN
+    );
+  }
+
   function initEvents() {
     document.addEventListener(
       'keydown',
       (event) => {
+        if (isConsoleToggleKey(event) || Console.show) {
+          Event.emit('keydown', event.key, event.code);
+          event.preventDefault();
+          return;
+        }
         if (!state.playing) {
           event.preventDefault();
           return;
         }
-        Event.emit('keydown', event.key);
-        if (!Console.show) input.keys[event.keyCode] = true;
+        Event.emit('keydown', event.key, event.code);
+        input.keys[event.keyCode] = true;
         event.preventDefault();
       },
       false,
@@ -185,12 +198,16 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     document.addEventListener(
       'keyup',
       (event) => {
+        if (Console.show) {
+          event.preventDefault();
+          return;
+        }
         if (!state.playing) {
           event.preventDefault();
           return;
         }
-        Event.emit('keyup', event.key);
-        if (!Console.show) input.keys[event.keyCode] = false;
+        Event.emit('keyup', event.key, event.code);
+        input.keys[event.keyCode] = false;
         event.preventDefault();
       },
       false,
@@ -199,6 +216,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       'click',
       (e) => {
         startAssetLoads();
+        if (Console.show) return;
         if (gameClient && !gameClient.isPlaying()) {
           const rect = canvas.getBoundingClientRect();
           const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -255,6 +273,15 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     canvas.addEventListener(
       'wheel',
       (e) => {
+        if (Console.show) {
+          const delta = e.deltaY || e.detail || e.wheelDelta;
+          if (Date.now() > lastWheel) {
+            lastWheel = Date.now() + 60;
+            Event.emit('mousewheel', delta);
+          }
+          e.preventDefault();
+          return;
+        }
         if (!state.playing) {
           e.preventDefault();
           return;
@@ -321,12 +348,14 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     if (textReady()) {
       text.render([0, 0], 2, '#rLoading...', 2, { center: true });
     }
+    Console.render();
     animationId = requestAnimationFrame(renderLoading);
   }
 
   function renderLoop() {
     if (destroyed) return;
     gameClient.render();
+    Console.render();
     calcFps();
     stats.count_kadr += 1;
     animationId = requestAnimationFrame(renderLoop);

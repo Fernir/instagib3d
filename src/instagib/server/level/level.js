@@ -6,6 +6,44 @@ import { Dynent } from '../objects/dynent.js';
 import { AI } from './ai.js';
 import { LevelGeneration } from './gener.js';
 
+const LAVA_SHORE_FACTOR = 102;
+const LAVA_SPAWN_FACTOR = 160;
+const MAP_COLLIDE_FACTOR = 80;
+
+function bridgeLocalPos(worldPos, bridge) {
+  const dist = Vector.sub(worldPos, bridge.pos);
+  const cosa = Math.cos(bridge.angle);
+  const sina = Math.sin(bridge.angle);
+  return new Vector(dist.x * cosa - dist.y * sina, dist.x * sina + dist.y * cosa);
+}
+
+function bridgeDominantInwardLocal(bp, hx, hy, margin = 0.4) {
+  const dxIn = hx - Math.abs(bp.x);
+  const dyIn = hy - Math.abs(bp.y);
+  if (dxIn > margin && dyIn > margin) return null;
+  const localNorm = new Vector(0, 0);
+  if (dxIn <= dyIn) localNorm.x = bp.x > 0 ? -1 : 1;
+  else localNorm.y = bp.y > 0 ? -1 : 1;
+  return localNorm;
+}
+
+function bridgeLavaEdgeInward(worldPos, bridge, getLavaTile, factor = LAVA_SHORE_FACTOR) {
+  const bp = bridgeLocalPos(worldPos, bridge);
+  const hx = bridge.size.x * 0.5;
+  const hy = bridge.size.y * 0.5;
+  const localNorm = bridgeDominantInwardLocal(bp, hx, hy);
+  if (!localNorm) return null;
+  const cosa = Math.cos(bridge.angle);
+  const sina = Math.sin(bridge.angle);
+  const inward = new Vector(
+    localNorm.x * cosa - localNorm.y * sina,
+    localNorm.x * sina + localNorm.y * cosa,
+  );
+  const probe = Vector.add(worldPos, Vector.mul(new Vector(inward), -0.6));
+  if (getLavaTile(probe) <= factor) return null;
+  return inward;
+}
+
 class Level {
   constructor(size_class, seed) {
     this.getItemPos = function () {
@@ -23,11 +61,12 @@ class Level {
         let x = (my_board_width + random_generator() * (level.getSize() - my_board_width - 1)) | 0;
         let y = (my_board_width + random_generator() * (level.getSize() - my_board_width - 1)) | 0;
         let pos = new Vector(x, y);
-        if (!this.collideMap(pos, 50) && !this.collideLava(pos, 50)) return pos;
+        if (!this.collideMap(pos, 50) && !this.collideLava(pos, LAVA_SPAWN_FACTOR)) return pos;
       }
     };
     this.getMaxBots = function () {
       // calc count players. One player for 16x16 square
+      const MAX_BOTS = 20;
       let square = 0;
       level.getObstructionMap().for_each(function (val) {
         if (val < 0.5) square++;
@@ -35,7 +74,7 @@ class Level {
       });
       let count_player = (square / (16 * 16)) | 0;
       Console.debug('Count players for this level = ', count_player);
-      return count_player;
+      return Math.min(count_player, MAX_BOTS);
     };
 
     //collide
@@ -89,16 +128,9 @@ class Level {
       let bridges = level.getBridges().getBridges();
       for (let i = 0; i < bridges.length; i++) {
         let bridge = bridges[i];
-        let dist = Vector.sub(pos, bridge.pos);
-
-        let cosa = Math.cos(bridge.angle);
-        let sina = Math.sin(bridge.angle);
-
-        let x = dist.x * cosa - dist.y * sina;
-        let y = dist.x * sina + dist.y * cosa;
-
-        if (Math.abs(x) < bridge.size.x * 0.5 + 0.3 && Math.abs(y) < bridge.size.y * 0.5 + 0.3)
-          return { bridge: bridge, pos: new Vector(x, y) };
+        let local = bridgeLocalPos(pos, bridge);
+        if (Math.abs(local.x) < bridge.size.x * 0.5 + 0.3 && Math.abs(local.y) < bridge.size.y * 0.5 + 0.3)
+          return { bridge: bridge, pos: local };
       }
       return null;
     };
@@ -106,7 +138,7 @@ class Level {
     //collide map
     //pos - Vector
     //return Vector
-    this.collideMap = function (pos, factor = 80) {
+    this.collideMap = function (pos, factor = MAP_COLLIDE_FACTOR) {
       let dir = new Vector(0, 0);
       let tile = this.getNorm(dir, pos);
       return tile > factor ? dir : null;
@@ -114,9 +146,35 @@ class Level {
 
     //collide_lava
     //pos - Vector
-    this.collideLava = function (pos, factor = 160) {
+    this.collideLava = function (pos, factor = LAVA_SPAWN_FACTOR) {
       let tile = this.getCollide(pos, true);
       return tile > factor;
+    };
+
+    // Бортик у лавы: не даёт зайти в «чашу» (на мосту — отдельная проверка края).
+    this.collideLavaShore = function (pos, factor = LAVA_SHORE_FACTOR) {
+      if (this.getCollideBridges(pos) !== null) return null;
+      let tile = this.getCollide(pos, true);
+      if (tile <= factor) return null;
+      let norm = new Vector(0, 0);
+      this.getNorm(norm, pos, true);
+      if (norm.length2() < 1e-10) return null;
+      return norm;
+    };
+
+    // Край моста над лавой — нельзя слезть в «чашу».
+    this.collideBridgeLavaEdge = function (pos, factor = LAVA_SHORE_FACTOR) {
+      const hit = this.getCollideBridges(pos);
+      if (!hit) return null;
+      return bridgeLavaEdgeInward(pos, hit.bridge, (p) => this.getCollide(p, true), factor);
+    };
+
+    this.collideLavaBarrier = function (pos) {
+      let norm = this.collideLavaShore(pos);
+      if (norm) return { norm, kind: 'shore' };
+      norm = this.collideBridgeLavaEdge(pos);
+      if (norm) return { norm, kind: 'bridge' };
+      return null;
     };
 
     //pos -- Vector
@@ -179,7 +237,7 @@ class Level {
     }
 
     const my_size_class = size_class; // 0 - 64, 1 - 128, 2 - 256
-    const my_board_width = 5;
+    const my_board_width = 3;
     const my_seed = seed; //(Date.now() * Math.random()) & 0xffffffff;
 
     Console.debug('My seed = ', my_seed);
@@ -192,4 +250,4 @@ class Level {
   }
 }
 
-export { Level };
+export { Level, LAVA_SHORE_FACTOR, bridgeLocalPos, bridgeDominantInwardLocal, bridgeLavaEdgeInward };

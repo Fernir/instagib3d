@@ -4,9 +4,10 @@ import { Event } from '../server/libs/event.js';
 
 import { Shader } from './shader.js';
 
-Event.on('keydown', function (key) {
-  if (key === Console.TILDA_MAC || key === Console.TILDA_WIN) {
+Event.on('keydown', function (key, code) {
+  if (code === Console.TILDA_CODE || key === Console.TILDA_MAC || key === Console.TILDA_WIN) {
     Console.show = !Console.show;
+    if (Console.show && document.pointerLockElement) document.exitPointerLock?.();
   } else if (Console.show) {
     if (key.length === 1) {
       Console.current_command += key;
@@ -119,6 +120,7 @@ Console.getAutocomplete = function () {
 };
 
 Console.load = function () {
+  Console.TILDA_CODE = 'Backquote';
   Console.TILDA_MAC = '§';
   Console.TILDA_WIN = '`';
   Console.ENTER = 'Enter';

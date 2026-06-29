@@ -8,7 +8,7 @@ import { updateItem, itemForEach } from '../objects/item.js';
 import { Weapon } from '../objects/weapon.js';
 
 import { gameplay } from './gameplay.js';
-import { EVENT } from './global.js';
+import { EVENT, WEAPON } from './global.js';
 
 class Game {
   constructor(size_class, seed) {
@@ -27,6 +27,7 @@ class Game {
     this.level = new Level(size_class, seed);
     let nickGenerator = new NickGenerator(3);
 
+    const spectator_bot_cap = 6;
     let max_players = this.level.getMaxBots();
 
     function createBot(nick, isBot) {
@@ -49,7 +50,8 @@ class Game {
       Console.error('Could not find bot', bot.nick);
     }
     function handleCountBots() {
-      let count_for_create = max_players - self.bots.length;
+      const cap = hasActivePlayers() ? max_players : spectator_bot_cap;
+      let count_for_create = cap - self.bots.length;
 
       if (count_for_create > 0) {
         for (let i = 0; i < count_for_create; i++) addBot();
@@ -60,12 +62,18 @@ class Game {
             removeBot(self.bots[i]);
             count_for_remove--;
           } else i++;
+        for (let i = self.bots.length - 1; i >= 0 && count_for_remove > 0; i--) {
+          if (self.bots[i].ai) {
+            removeBot(self.bots[i]);
+            count_for_remove--;
+          }
+        }
       }
     }
     function updateBot() {
       handleCountBots();
       self.bots.forEach(function (bot) {
-        if (!bot.alive && Date.now() > bot.resp_time) {
+        if (!bot.alive && !bot.spawning && Date.now() > bot.resp_time) {
           bot.respawn();
         }
         bot.update(Date.now());
@@ -153,6 +161,17 @@ class Game {
     let frame_time = 0;
     let timer_id;
     let update_time = parseInt(config.get('game-server:update-time'));
+    function hasActivePlayers() {
+      for (let i = 0; i < self.clients.length; i++) if (self.clients[i].bot) return true;
+      return false;
+    }
+    function armShowcaseBot(bot) {
+      if (!bot || !bot.weapon) return;
+      for (let t = WEAPON.PISTOL; t <= WEAPON.ROCKET; t++) {
+        bot.weapon.patrons[t] = WEAPON.wea_tabl[t].patrons;
+      }
+      bot.weapon.set(WEAPON.ROCKET);
+    }
     function update() {
       let start = Date.now();
 
@@ -296,6 +315,7 @@ class Game {
       if (index < 0) index = 0;
       if (index > this.bots.length - 1) index = this.bots.length - 1;
       client.spectator = this.bots[index];
+      armShowcaseBot(this.bots[index]);
     };
     this.spectator = function (client, nick) {
       // Без аргумента — берём первого живого бота (или просто первого).
@@ -311,11 +331,13 @@ class Game {
         if (!pick && this.bots.length > 0) pick = this.bots[0];
         if (!pick) return 'No bots available';
         client.spectator = pick;
+        armShowcaseBot(pick);
         return 'Ok';
       }
       for (let i = 0; i < this.bots.length; i++) {
         if (this.bots[i].nick === nick) {
           client.spectator = this.bots[i];
+          armShowcaseBot(this.bots[i]);
           return 'Ok';
         }
       }
@@ -323,6 +345,18 @@ class Game {
     };
     this.onclose = function () {
       Console.assert(false, 'Please override this function');
+    };
+
+    // До нажатия Play клиент смотрит на client.spectator без client.bot —
+    // этот бот только демонстрирует бой, без сбора пикапов.
+    this.isShowcaseBot = function (bot) {
+      if (!bot || !bot.ai) return false;
+      for (let i = 0; i < self.clients.length; i++) {
+        const client = self.clients[i];
+        if (client.bot) continue;
+        if (client.spectator === bot) return true;
+      }
+      return false;
     };
   }
 }

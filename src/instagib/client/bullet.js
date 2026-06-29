@@ -241,8 +241,6 @@ class BulletShaft {
       camera || (state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera());
     const camPos = cam && cam.pos ? cam : cam && cam.dynent ? cam.dynent : null;
     if (!camPos) return;
-    const lr = state.LevelRender;
-    if (lr && lr.getWorldFog && lr.getWorldFog(camPos.pos, this.dest) > 0.95) return;
     const c = this.power === ITEM.QUAD ? [1.45, 0.45, 0.5, 1] : [0.45, 0.7, 1.5, 1];
 
     const eh = (state.LevelRender && state.LevelRender.eye_height) || 1.6;

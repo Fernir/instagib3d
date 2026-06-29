@@ -1,11 +1,62 @@
 import { state as runtime } from '../../runtime-state.js';
 import { Aibot } from '../game/aibot.js';
 import { ITEM, WEAPON } from '../game/global.js';
+import { LAVA_SHORE_FACTOR } from '../level/level.js';
 import { Event } from '../libs/event.js';
 import { Vector } from '../libs/vector.js';
 
 import { Dynent } from './dynent.js';
+import { bulletKnockbackDir } from './event.js';
 import { Weapon } from './weapon.js';
+
+function slideBarrierCollision(dynent, knockback_vel, norm, dt, inward) {
+  norm.normalize();
+  const dot = norm.dot(dynent.vel);
+  const blockVel = inward ? dot > 0 : dot < 0;
+  if (!blockVel) return;
+  dynent.pos.sub(norm.mul(dot * dt));
+  const nkb = norm.dot(knockback_vel);
+  const blockKb = inward ? nkb > 0 : nkb < 0;
+  if (blockKb) knockback_vel.sub(Vector.mul(new Vector(norm), nkb));
+}
+
+const KNOCKBACK_PAIN = {
+  default: 0.004,
+  highDamage: 0.007,
+  rocketBase: 0.014,
+  rocketScale: 0.048,
+  [WEAPON.PLASMA]: 0.008,
+  [WEAPON.ZENIT]: 0.011,
+  [WEAPON.RAIL]: 0.013,
+};
+const KNOCKBACK_DEATH = {
+  default: 0.022,
+  rocketBase: 0.04,
+  rocketScale: 0.11,
+  [WEAPON.PLASMA]: 0.028,
+  [WEAPON.ZENIT]: 0.032,
+  [WEAPON.RAIL]: 0.038,
+};
+
+function knockStrength(bullet, dist, table) {
+  if (bullet.type === WEAPON.ROCKET) {
+    const falloff = Math.max(0, 1 - dist / WEAPON.RADIUS_ROCKET);
+    return table.rocketBase + falloff * table.rocketScale;
+  }
+  return table[bullet.type] ?? table.default;
+}
+
+function addKnockbackVel(bot, bullet, opponent, table, maxKb, damage = 0) {
+  if (!bullet || bullet.type === WEAPON.SHAFT) return;
+  const kb = bulletKnockbackDir(bullet, opponent);
+  if (!kb) return;
+  const dist = bullet.pos ? Vector.sub(bot.dynent.pos, bullet.pos).length() : 0;
+  let strength = knockStrength(bullet, dist, table);
+  if (damage > 1500 && table.highDamage) strength = table.highDamage;
+  bot.knockback_vel.add(Vector.mul(kb, strength));
+  const kbLen = bot.knockback_vel.length();
+  if (kbLen > maxKb) bot.knockback_vel.mul(maxKb / kbLen);
+}
 
 class Bot {
   constructor(game, nick, id, isBot) {
@@ -38,7 +89,10 @@ class Bot {
     this.dynent = new Dynent(pos);
     this.health = Bot.HEALTH;
     this.weapon = new Weapon(this);
-    this.alive = true;
+    this.alive = false;
+    this.spawning = true;
+    this.spawn_start = Date.now();
+    this.invuln_until = 0;
     this.resp_time = 0;
     this.power = 0;
     this.powertime = 0;
@@ -46,8 +100,15 @@ class Bot {
     this.last_shoot_time = 0;
     this.speed = this.ai ? Bot.AI_SPEED : Bot.SPEED;
     this.last_update = Date.now();
+    this.knockback_vel = new Vector(0, 0);
 
     Event.emit('botrespawn', this);
+  }
+
+  finishSpawn() {
+    this.spawning = false;
+    this.alive = true;
+    this.invuln_until = Date.now() + Bot.SPAWN_INVULN_MS;
 
     let bot = null;
     do {
@@ -66,7 +127,15 @@ class Bot {
     }
     this.last_update = time;
 
-    if (!this.alive) return true;
+    if (this.spawning) {
+      if (time >= this.spawn_start + Bot.SPAWN_ANIM_MS) this.finishSpawn();
+      return true;
+    }
+
+    if (!this.alive) {
+      this.applyCorpseMotion(dt);
+      return true;
+    }
 
     // God mode: keep every weapon stocked to its max each frame, which gives
     // the god player all guns plus effectively infinite ammo (refilled before
@@ -94,43 +163,12 @@ class Bot {
     );
 
     this.dynent.vel = Vector.mul(vec, this.speed);
+    this.blendKnockbackVel(dt);
     this.dynent.update(dt);
-
-    if (this.shoot) this.weapon.shoot();
-
-    //collide map
-    function collide_map(self) {
-      let norm = self.game.level.collideMap(self.dynent.pos);
-      if (norm) {
-        norm.normalize();
-        let dot = norm.dot(self.dynent.vel);
-        if (dot > 0) {
-          let delta = norm.mul(dot * dt);
-          self.dynent.pos.sub(delta);
-        }
-      }
-      // Velocity projection alone cannot eject from inside a wall — push out along
-      // the density gradient when already past the 0.5 iso-surface (tile > 128).
-      const tile = self.game.level.getCollide(self.dynent.pos, false);
-      if (tile > 128) {
-        const grad = new Vector(0, 0);
-        self.game.level.getNorm(grad, self.dynent.pos, false);
-        if (grad.length2() > 1e-8) {
-          grad.normalize();
-          const depth = Math.min(0.2, ((tile - 128) / 255) * 0.45);
-          self.dynent.pos.sub(grad.mul(depth));
-        }
-      }
-    }
-
-    collide_map(this);
+    this.resolveMapCollision(dt);
     this.collide_bot(dt);
 
-    //collide_lava
-    if (this.game.level.collideLava(this.dynent.pos)) {
-      let bridge = this.game.level.getCollideBridges(this.dynent.pos);
-      if (bridge === null) this.pain(Bot.HEALTH + 1, this, null, { lava: true });
-    }
+    if (this.shoot) this.weapon.shoot();
 
     //powerup regen
     if (this.power === ITEM.REGEN && time > this.powertime) {
@@ -163,19 +201,74 @@ class Bot {
     return res;
   }
 
-  /*
-damage - count HP
-opponent - bot, owner bullet
-bullet.pos - position of this bullet
-bullet.vel - velocity of this bullet
-bullet.type - type weapon
-param.lava
-*/
-  pain(damage, opponent, bullet, param) {
+  resolveMapCollision(dt) {
+    const wallNorm = this.game.level.collideMap(this.dynent.pos);
+    if (wallNorm) slideBarrierCollision(this.dynent, this.knockback_vel, wallNorm, dt, true);
+
+    const barrier = this.game.level.collideLavaBarrier(this.dynent.pos);
+    if (barrier) {
+      slideBarrierCollision(
+        this.dynent,
+        this.knockback_vel,
+        barrier.norm,
+        dt,
+        barrier.kind !== 'bridge',
+      );
+      if (barrier.kind === 'shore') {
+        const lavaTile = this.game.level.getCollide(this.dynent.pos, true);
+        if (lavaTile > LAVA_SHORE_FACTOR) {
+          const depth = Math.min(0.35, ((lavaTile - LAVA_SHORE_FACTOR) / 255) * 0.9);
+          this.dynent.pos.sub(barrier.norm.normalize().mul(depth));
+        }
+      }
+    }
+    const tile = this.game.level.getCollide(this.dynent.pos, false);
+    if (tile > 128) {
+      const grad = new Vector(0, 0);
+      this.game.level.getNorm(grad, this.dynent.pos, false);
+      if (grad.length2() > 1e-8) {
+        grad.normalize();
+        const depth = Math.min(0.2, ((tile - 128) / 255) * 0.45);
+        this.dynent.pos.sub(grad.mul(depth));
+      }
+    }
+  }
+
+  blendKnockbackVel(dt, maxSpeed = 0.055) {
+    if (this.knockback_vel.length2() < 1e-12) return;
+    this.dynent.vel.x += this.knockback_vel.x;
+    this.dynent.vel.y += this.knockback_vel.y;
+    this.knockback_vel.mul(Math.pow(0.76, dt / 16));
+    const kbLen = this.knockback_vel.length();
+    if (kbLen > maxSpeed) this.knockback_vel.mul(maxSpeed / kbLen);
+    else if (kbLen < 0.00035) this.knockback_vel.set(0, 0);
+  }
+
+  applyCorpseMotion(dt) {
+    if (this.knockback_vel.length2() < 1e-12) return;
+    this.dynent.vel.set(this.knockback_vel.x, this.knockback_vel.y);
+    this.dynent.update(dt);
+    this.resolveMapCollision(dt);
+    this.knockback_vel.mul(Math.pow(0.72, dt / 16));
+    const kbLen = this.knockback_vel.length();
+    if (kbLen > 0.09) this.knockback_vel.mul(0.09 / kbLen);
+    else if (kbLen < 0.0003) this.knockback_vel.set(0, 0);
+  }
+
+  applyDeathKnockback(bullet, opponent) {
+    addKnockbackVel(this, bullet, opponent, KNOCKBACK_DEATH, 0.1);
+  }
+
+  applyKnockback(bullet, damage, opponent) {
+    addKnockbackVel(this, bullet, opponent, KNOCKBACK_PAIN, 0.058, damage);
+  }
+
+  pain(damage, opponent, bullet) {
     if (runtime.godMode && this.nick === runtime.godNick) {
-      Event.emit('botpain', this, bullet);
+      Event.emit('botpain', this, bullet, opponent);
       return;
     }
+    if (this.spawning || (this.invuln_until && Date.now() < this.invuln_until)) return;
     if (this.shield) {
       damage *= 0.5;
       if (bullet && bullet.type === WEAPON.RAIL) {
@@ -183,25 +276,29 @@ param.lava
         damage = 0;
       }
     }
+    if (bullet && damage > 0) {
+      this.applyKnockback(bullet, damage, opponent);
+    }
     this.health -= damage;
     if (this.health < 0) {
-      this.dead(opponent, bullet, param);
+      this.dead(opponent, bullet);
     }
-    Event.emit('botpain', this, bullet);
+    Event.emit('botpain', this, bullet, opponent);
   }
 
-  dead(opponent, bullet, param) {
+  dead(opponent, bullet) {
     this.alive = false;
     this.resp_time = Date.now() + 2000;
-
-    let isLava = param && param.lava !== undefined && param.lava === true;
-    Event.emit('botdead', this, opponent, bullet, isLava);
+    this.applyDeathKnockback(bullet, opponent);
+    Event.emit('botdead', this, opponent, bullet);
   }
 }
 
 Bot.SPEED = 0.008;
 Bot.AI_SPEED = 0.0058;
 Bot.HEALTH = 3999;
+Bot.SPAWN_ANIM_MS = 2200;
+Bot.SPAWN_INVULN_MS = 3000;
 
 Event.on('takehealth', function (bot) {
   bot.health = Bot.HEALTH;

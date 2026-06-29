@@ -2,6 +2,39 @@ import { EVENT, WEAPON } from '../game/global.js';
 import { Event } from '../libs/event.js';
 import { Vector } from '../libs/vector.js';
 
+function bulletKnockbackDir(bullet, opponent) {
+  if (!bullet) return null;
+  if (bullet.vel && bullet.vel.length2() > 1e-12) {
+    return Vector.normalize(new Vector(bullet.vel));
+  }
+  if (bullet.norm_dir && bullet.norm_dir.length2() > 1e-12) {
+    return Vector.normalize(new Vector(bullet.norm_dir));
+  }
+  if (bullet.pos && opponent && opponent.dynent) {
+    const d = Vector.sub(bullet.pos, opponent.dynent.pos);
+    if (d.length2() > 1e-12) return Vector.normalize(d);
+  }
+  return null;
+}
+
+function eventKnockbackMag(bullet, targetPos, kind) {
+  let falloff = 0;
+  if (bullet.type === WEAPON.ROCKET && bullet.pos) {
+    falloff = Math.max(0, 1 - Vector.sub(targetPos, bullet.pos).length() / WEAPON.RADIUS_ROCKET);
+  }
+  if (kind === 'pain') {
+    if (bullet.type === WEAPON.ROCKET) return 0.008 + falloff * 0.028;
+    if (bullet.type === WEAPON.PLASMA) return 0.01;
+    if (bullet.type === WEAPON.ZENIT) return 0.014;
+    return 0.012;
+  }
+  if (bullet.type === WEAPON.ROCKET) return 0.02 * falloff;
+  if (bullet.type === WEAPON.PLASMA) return 0.004;
+  if (bullet.type === WEAPON.ZENIT) return 0.01;
+  if (bullet.type === WEAPON.RAIL) return 0.008;
+  return 0.004;
+}
+
 class GameEvent {
   constructor(type, pos, dir, arg1, arg2) {
     this.type = type;
@@ -13,30 +46,25 @@ class GameEvent {
 }
 
 Event.on('botrespawn', function (bot) {
-  bot.game.events.push(new GameEvent(EVENT.BOT_RESPAWN, bot.dynent.pos, null));
+  bot.game.events.push(new GameEvent(EVENT.BOT_RESPAWN, bot.dynent.pos, null, bot.id));
 });
 
-Event.on('botpain', function (bot, bullet) {
+Event.on('botpain', function (bot, bullet, opponent) {
   if (bullet && bullet.type !== WEAPON.RAIL) {
-    let dir = Vector.sub(bullet.pos, bot.dynent.pos);
-    let pos = bullet.type === WEAPON.ROCKET ? bot.dynent.pos : bullet.pos;
-    bot.game.events.push(new GameEvent(EVENT.PAIN, pos, dir, bot.id));
+    const unit = bulletKnockbackDir(bullet, opponent);
+    if (!unit) return;
+    const mag = eventKnockbackMag(bullet, bot.dynent.pos, 'pain');
+    const pos = bullet.type === WEAPON.ROCKET ? bot.dynent.pos : bullet.pos || bot.dynent.pos;
+    bot.game.events.push(new GameEvent(EVENT.PAIN, pos, Vector.mul(unit, mag), bot.id));
   }
 });
 
-Event.on('botdead', function (bot, _killer, bullet, _isLava) {
-  //gibs
+Event.on('botdead', function (bot, killer, bullet) {
   let dir = new Vector(0, 0);
   if (bullet) {
-    if (bullet.type === WEAPON.ROCKET) {
-      dir = Vector.sub(bot.dynent.pos, bullet.pos);
-      let force = 1 - dir.length() / WEAPON.RADIUS_ROCKET;
-      if (force < 0) force = 0;
-      dir.mul(force * 0.02);
-    } else if (bullet.type === WEAPON.PLASMA) {
-      dir = Vector.sub(bot.dynent.pos, bullet.pos).normalize().mul(0.004);
-    } else if (bullet.type === WEAPON.ZENIT) {
-      dir = Vector.normalize(bullet.vel).mul(0.01);
+    const unit = bulletKnockbackDir(bullet, killer);
+    if (unit) {
+      dir = Vector.mul(unit, eventKnockbackMag(bullet, bot.dynent.pos, 'death'));
     }
   }
   bot.game.events.push(new GameEvent(EVENT.BOT_DEAD, bot.dynent.pos, dir, bot.id));
@@ -76,4 +104,4 @@ Event.on('bulletrespawn', function (bullet, sound) {
   );
 });
 
-export { GameEvent };
+export { GameEvent, bulletKnockbackDir, eventKnockbackMag };

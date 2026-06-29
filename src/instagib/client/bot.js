@@ -9,6 +9,7 @@ import { Dynent } from '../server/objects/dynent.js';
 
 import { MD2Model } from './md2.js';
 import { Sound } from './sound.js';
+import { SpawnFx } from './spawnfx.js';
 import { WeaponClient } from './weapon.js';
 
 const MD2_SCALE = 0.036;
@@ -35,7 +36,7 @@ const ANIM_TABLE = {
   stand: { prefix: 'stand', fps: 10, once: false },
   run: { prefix: 'run', fps: 12, once: false },
   attack: { prefix: 'attack', fps: 15, once: false },
-  pain: { prefix: 'pain1', fps: 18, once: false },
+  pain: { prefix: 'pain1', fps: 20, once: true, count: 4 },
   // prefix 'death' (не 'death1'): у части моделей кадры названы death1..death20
   // (три анимации смерти подряд), и 'death1' хватал death1+death10..19 — тело
   // падало дважды. Берём первую анимацию смерти — первые count кадров по порядку.
@@ -83,15 +84,20 @@ function md2Frames(model, name) {
   return model._animCache[name];
 }
 
+const PAIN_ANIM_MS = 220;
+const PAIN_COOLDOWN_MS = 140;
+
 function chooseAnim(bot) {
+  if (bot.spawnStartTime && SpawnFx.botAppearance(bot.spawnStartTime).spawning) return 'stand';
   if (!bot.alive) return 'death';
+  if (bot.painStartTime && Date.now() - bot.painStartTime < PAIN_ANIM_MS) return 'pain';
   if (bot.weapon && bot.weapon.shooting && Date.now() < bot.weapon.dead) return 'attack';
   if (bot.begin_of_walk !== 0) return 'run';
   return 'stand';
 }
 
-const CORPSE_LIFETIME_MS = 5000;
-const CORPSE_FADE_MS = 1500;
+const CORPSE_LIFETIME_MS = 14000;
+const CORPSE_FADE_MS = 2500;
 
 // Поза MD2-бота: модель, матрица и пара кадров с lerp для текущей анимации.
 // Используется и обычным рендером, и проходом карты теней.
@@ -105,7 +111,9 @@ function botPose(bot, spec) {
   const now = Date.now();
   let cursor;
   if (anim.once) {
-    const start = bot.deathStartTime || now;
+    let start = now;
+    if (animName === 'death') start = bot.deathStartTime || now;
+    else if (animName === 'pain') start = bot.painStartTime || now;
     cursor = ((now - start) / 1000) * anim.fps;
     if (cursor >= frames.length - 1) cursor = frames.length - 1.0001;
   } else {
@@ -119,14 +127,16 @@ function botPose(bot, spec) {
   const mat4 = state.mat4;
   const m = mat4.create();
   mat4.identity(m);
-  mat4.translate(m, m, [bot.dynent.pos.x, MD2_Y_OFFSET, bot.dynent.pos.y]);
+  const kickX = bot.alive ? bot.painKickX || 0 : bot.deathSlideX || 0;
+  const kickY = bot.alive ? bot.painKickY || 0 : bot.deathSlideY || 0;
+  mat4.translate(m, m, [bot.dynent.pos.x + kickX, MD2_Y_OFFSET, bot.dynent.pos.y + kickY]);
   mat4.rotateY(m, m, bot.dynent.angle);
   mat4.scale(m, m, [MD2_SCALE, MD2_SCALE, MD2_SCALE]);
 
   return { model, m, fa: frames[ia], fb: frames[ib], lerp };
 }
 
-function renderBotMD2(camera, bot, spec, distFog) {
+function renderBotMD2(camera, bot, spec, distFog, spawnAlpha = 1, spawnScale = 1) {
   const pose = botPose(bot, spec);
   if (!pose) return false;
   const model = pose.model;
@@ -134,6 +144,10 @@ function renderBotMD2(camera, bot, spec, distFog) {
   const lerp = pose.lerp;
   const now = Date.now();
   const mat4 = state.mat4;
+
+  if (spawnScale !== 1) {
+    mat4.scale(m, m, [spawnScale, spawnScale, spawnScale]);
+  }
 
   let color = [1, 1, 1, 1];
   if (bot.power === ITEM.QUAD) color = [1.1, 0.85, 0.85, 1];
@@ -148,15 +162,11 @@ function renderBotMD2(camera, bot, spec, distFog) {
       fadeAlpha = Math.max(0, 1 - (dt - fadeStart) / CORPSE_FADE_MS);
     }
   }
-  if (distFog !== undefined && distFog > 0) {
-    // Полностью растворяемся к distFog≈0.9 (раньше порога cull fog>0.99),
-    // плавно начиная с 0.6 — моб тает в тумане, а не «выскакивает».
-    fadeAlpha *= Math.max(0, Math.min(1, (0.9 - distFog) / 0.3));
-  }
-  color[3] = fadeAlpha;
+  color[3] = fadeAlpha * Math.max(0, Math.min(1, spawnAlpha));
 
   const gl = state.gl;
-  if (fadeAlpha < 0.999) {
+  const needsBlend = fadeAlpha < 0.999 || spawnAlpha < 0.999;
+  if (needsBlend) {
     gl.depthMask(false);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -180,13 +190,14 @@ function renderBotMD2(camera, bot, spec, distFog) {
   // Оба MD2 имеют одинаковый порядок 198 кадров, так что используем те же индексы
   // (`frames[ia]`, `frames[ib]`) и тот же lerp — оружие не отстаёт и не исчезает
   // во время pain/death (где префиксы в w_*.md2 отличаются от player.md2).
-  if (bot.weapon) {
+  // Оружие в руках — только пока бот жив; после смерти дроп лежит на земле отдельным пикапом.
+  if (bot.alive && bot.weapon) {
     const wSpec = getWeaponSpec(spec, bot.weapon.type);
     if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
       const last = wSpec.model.frameBuffers.length - 1;
       const wia = Math.max(0, Math.min(last, pose.fa | 0));
       const wib = Math.max(0, Math.min(last, pose.fb | 0));
-      wSpec.model.render(m, wia, wib, lerp, wSpec.skinIndex, [1, 1, 1, fadeAlpha], lightCtx);
+      wSpec.model.render(m, wia, wib, lerp, wSpec.skinIndex, [1, 1, 1, fadeAlpha * spawnAlpha], lightCtx);
     }
   }
 
@@ -216,6 +227,47 @@ function renderBotMD2(camera, bot, spec, distFog) {
     drawShieldBubble(shieldM);
   }
 
+  return true;
+}
+
+function botWireColor(bot) {
+  if (bot.power === ITEM.QUAD) return [1.0, 0.7, 0.75, 1];
+  if (bot.power === ITEM.REGEN) return [0.75, 1.0, 0.8, 1];
+  if (bot.power === ITEM.SPEED) return [1.0, 0.9, 0.65, 1];
+  return [0.85, 0.95, 1.0, 1];
+}
+
+function renderBotWirePhase(camera, bot, spec, phase, spawnAlpha, spawnScale) {
+  const pose = botPose(bot, spec);
+  if (!pose) return false;
+  const mat4 = state.mat4;
+  const m = pose.m;
+  if (spawnScale !== 1) mat4.scale(m, m, [spawnScale, spawnScale, spawnScale]);
+
+  if (phase === 'depth') {
+    pose.model.renderWireDepth(m, pose.fa, pose.fb, pose.lerp);
+    if (bot.alive && bot.weapon) {
+      const wSpec = getWeaponSpec(spec, bot.weapon.type);
+      if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
+        const last = wSpec.model.frameBuffers.length - 1;
+        const wia = Math.max(0, Math.min(last, pose.fa | 0));
+        const wib = Math.max(0, Math.min(last, pose.fb | 0));
+        wSpec.model.renderWireDepth(m, wia, wib, pose.lerp);
+      }
+    }
+    return true;
+  }
+
+  pose.model.renderWireDraw(m, pose.fa, pose.fb, pose.lerp, botWireColor(bot));
+  if (bot.alive && bot.weapon) {
+    const wSpec = getWeaponSpec(spec, bot.weapon.type);
+    if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
+      const last = wSpec.model.frameBuffers.length - 1;
+      const wia = Math.max(0, Math.min(last, pose.fa | 0));
+      const wib = Math.max(0, Math.min(last, pose.fb | 0));
+      wSpec.model.renderWireDraw(m, wia, wib, pose.lerp, [0.9, 0.92, 1.0, 1]);
+    }
+  }
   return true;
 }
 
@@ -269,31 +321,76 @@ function publishLocalMuzzle(model, fIa, fIb, lerp, m, fwd, now) {
   };
 }
 
+function renderFirstPersonWeaponWire(camera, phase) {
+  if (!camera || !state.viewProj3D || !state.gameClient) return;
+  const myBot = state.gameClient.getCamera ? state.gameClient.getCamera() : null;
+  if (!myBot || !myBot.weapon || !myBot.alive) return;
+  const pose = resolveViewWeaponPose(myBot);
+  if (!pose) return;
+  const wSpec = pose.wSpec;
+  const ia = pose.ia;
+  const ib = pose.ib;
+  const lerp = pose.lerp;
+  const now = Date.now();
+  const mat4 = state.mat4;
+  const speed = myBot.speed || 0;
+  const bobAmp = Math.min(1, speed / (Bot.SPEED * 0.5));
+  const t = now * 0.012;
+  const bobScale = viewWepSwitch.phase !== 'idle' ? 0.12 : 1;
+  const bobY = Math.sin(t * 2.0) * 0.018 * bobAmp * bobScale;
+  const bobX = Math.cos(t) * 0.022 * bobAmp * bobScale;
+  const yaw = camera.dynent.angle;
+  const pitch = typeof getMousePitch === 'function' ? getMousePitch() : 0;
+  const eye_h = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
+  const cp = Math.cos(pitch),
+    sp = Math.sin(pitch);
+  const sy = Math.sin(yaw),
+    cy = Math.cos(yaw);
+  const right_x = cy;
+  const right_y = 0;
+  const right_z = -sy;
+  const up_x = -sy * sp;
+  const up_y = cp;
+  const up_z = -cy * sp;
+  const eye_x = camera.dynent.pos.x;
+  const eye_y = eye_h;
+  const eye_z = camera.dynent.pos.y;
+  const wpx = eye_x + right_x * bobX + up_x * bobY;
+  const wpy = eye_y + right_y * bobX + up_y * bobY;
+  const wpz = eye_z + right_z * bobX + up_z * bobY;
+  const m = mat4.create();
+  mat4.identity(m);
+  mat4.translate(m, m, [wpx, wpy, wpz]);
+  mat4.rotateY(m, m, yaw);
+  mat4.rotateX(m, m, pitch);
+  const VIEW_SCALE = 0.028;
+  mat4.scale(m, m, [-VIEW_SCALE, VIEW_SCALE, VIEW_SCALE]);
+  if (phase === 'depth') {
+    wSpec.model.renderWireDepth(m, ia, ib, lerp, true);
+    return;
+  }
+  wSpec.model.renderWireDraw(m, ia, ib, lerp, [1.0, 1.0, 1.05, 1], true, true);
+}
+
 function renderFirstPersonWeapon(camera) {
+  if (state.wireframe) {
+    renderFirstPersonWeaponWire(camera, 'wire');
+    return;
+  }
   if (!camera || !state.viewProj3D) return;
   if (!state.gameClient) return;
   const myBot = state.gameClient.getCamera ? state.gameClient.getCamera() : null;
   if (!myBot || !myBot.weapon || !myBot.alive) return;
 
-  // FP-view предпочитает оригинальные view-модели (v_*.md2). Если их нет —
-  // фолбэк на body-weapon модели той же player-модели, что использует бот.
-  const myBodySpec = pickMD2Spec(myBot.id || 0);
-  const wSpec =
-    getViewWeaponSpec(myBot.weapon.type) || getWeaponSpec(myBodySpec, myBot.weapon.type);
-  if (!wSpec) return;
+  // FP-view: resolveViewWeaponPose выбирает модель и кадры (idle/pow/putway/active).
+  const pose = resolveViewWeaponPose(myBot);
+  if (!pose) return;
+  const wSpec = pose.wSpec;
+  const ia = pose.ia;
+  const ib = pose.ib;
+  const lerp = pose.lerp;
 
   const now = Date.now();
-  const firing = myBot.weapon.shooting && now < myBot.weapon.dead;
-  const frameSet = viewWeaponFrames(wSpec.model, firing);
-  const wFrames = frameSet.frames;
-  if (!wFrames.length) return;
-  const fps = firing ? 22 : 7;
-  let cursor = (now / 1000) * fps;
-  cursor -= Math.floor(cursor / wFrames.length) * wFrames.length;
-  const ia = Math.floor(cursor);
-  const lerp = cursor - ia;
-  const ib = (ia + 1) % wFrames.length;
-
   const gl = state.gl;
   const mat4 = state.mat4;
 
@@ -301,8 +398,9 @@ function renderFirstPersonWeapon(camera) {
   const speed = myBot.speed || 0;
   const bobAmp = Math.min(1, speed / (Bot.SPEED * 0.5));
   const t = now * 0.012;
-  const bobY = Math.sin(t * 2.0) * 0.018 * bobAmp;
-  const bobX = Math.cos(t) * 0.022 * bobAmp;
+  const bobScale = viewWepSwitch.phase !== 'idle' ? 0.12 : 1;
+  const bobY = Math.sin(t * 2.0) * 0.018 * bobAmp * bobScale;
+  const bobX = Math.cos(t) * 0.022 * bobAmp * bobScale;
 
   const yaw = camera.dynent.angle;
   const pitch = typeof getMousePitch === 'function' ? getMousePitch() : 0;
@@ -342,23 +440,19 @@ function renderFirstPersonWeapon(camera) {
   mat4.translate(m, m, [wpx, wpy, wpz]);
   mat4.rotateY(m, m, yaw);
   mat4.rotateX(m, m, pitch);
-  // Q2 хранит модели в right-handed системе с +Y = LEFT. Наш expandFrame маппит
-  // Q2 +Y -> engine +X, что превращает «правую руку» в «левую» (хват модели зеркалится).
-  // Для view-weapon исправляем chirality зеркалом по X. Так курок/затвор/прицел
-  // оказываются с правильной стороны вида.
+  // Q2 view-модели: зеркало по X для правильного хвата (как до правок UV).
   const VIEW_SCALE = 0.028;
   mat4.scale(m, m, [-VIEW_SCALE, VIEW_SCALE, VIEW_SCALE]);
 
   // Физический кончик ствола в мире — для луча/вспышки/старта снарядов.
-  publishLocalMuzzle(wSpec.model, wFrames[ia], wFrames[ib], lerp, m, [fwd_x, fwd_y, fwd_z], now);
+  publishLocalMuzzle(wSpec.model, ia, ib, lerp, m, [fwd_x, fwd_y, fwd_z], now);
 
   const wasDepth = gl.isEnabled(gl.DEPTH_TEST);
   const wasCull = gl.isEnabled(gl.CULL_FACE);
   const wasBlend = gl.isEnabled(gl.BLEND);
   const wasDepthMask = gl.getParameter(gl.DEPTH_WRITEMASK);
 
-  // Q2 RF_WEAPONMODEL: рисуем поверх мира, но с back-face culling. После зеркала
-  // по X winding треугольников инвертируется — culling переключаем на FRONT.
+  // Q2 RF_WEAPONMODEL: рисуем поверх мира; scale(-X) инвертирует winding → cull FRONT.
   gl.enable(gl.CULL_FACE);
   gl.cullFace(gl.FRONT);
   gl.depthMask(false);
@@ -370,7 +464,7 @@ function renderFirstPersonWeapon(camera) {
   // лайтмапа в позиции игрока (не у глаз) — так оружие реагирует на свет «тайла»,
   // где стоит игрок, а не на тот, что под камерой/на полу за спиной.
   const lr2 = state.LevelRender;
-  wSpec.model.render(m, wFrames[ia], wFrames[ib], lerp, wSpec.skinIndex, [1.05, 1.05, 1.05, 1], {
+  wSpec.model.render(m, ia, ib, lerp, wSpec.skinIndex, [1.05, 1.05, 1.05, 1], {
     sunDir: lr2 && lr2.sunDir ? lr2.sunDir : [0.4, -0.85, 0.35],
     worldRef: [camera.dynent.pos.x, eye_h, camera.dynent.pos.y],
   });
@@ -523,16 +617,8 @@ function drawHpBar(nx, ny, width, height, ratio, opacity) {
   if (!wasBlend) gl.disable(gl.BLEND);
 }
 
-function getEntityFog(camera, targetPos) {
-  const lr = state.LevelRender;
-  if (lr && lr.getWorldFog) {
-    return lr.getWorldFog(camera.pos, targetPos);
-  }
-  return 0;
-}
 
-// Видим бота только при наличии прямой видимости (как в schibir/instagib.io):
-// мобы за стенами полностью скрыты, а не просвечивают силуэтом/худом.
+// Прямая видимость по карте стен — для ников/HP, не для моделей.
 function hasLineOfSightTo(camera, targetPos) {
   const lr = state.LevelRender;
   if (lr && lr.hasLineOfSight) {
@@ -541,17 +627,32 @@ function hasLineOfSightTo(camera, targetPos) {
   return true;
 }
 
-function pickMD2Spec(id) {
-  if (!BotClient.md2Specs || !BotClient.md2Specs.length) return null;
-  return BotClient.md2Specs[id % BotClient.md2Specs.length];
+// Проекция головы бота в NDC: ник/HP только когда модель попадает в кадр.
+function botHeadScreenPos(bot) {
+  const vp = state.viewProj3D;
+  if (!vp) return null;
+  const headY = MD2_Y_OFFSET + 1.55;
+  const wx = bot.dynent.pos.x;
+  const wz = bot.dynent.pos.y;
+  const cx = vp[0] * wx + vp[4] * headY + vp[8] * wz + vp[12];
+  const cy = vp[1] * wx + vp[5] * headY + vp[9] * wz + vp[13];
+  const cw = vp[3] * wx + vp[7] * headY + vp[11] * wz + vp[15];
+  if (cw <= 0.05) return null;
+  const nx = cx / cw;
+  const ny = cy / cw;
+  if (nx < -1.0 || nx > 1.0 || ny < -1.0 || ny > 1.0) return null;
+  return { nx, ny };
 }
 
-function startMd2Loads() {
-  if (BotClient.md2Cache) return;
-  BotClient.md2Cache = new Map();
-  BotClient.weaponPerBody = new Map(); // bodyDir -> { [weaponType]: { model, skinIndex } }
-  BotClient.md2Specs = [];
-  MD2_SPECS.forEach(async (entry) => {
+function pickMD2Spec(id) {
+  const specs = BotClient.md2Specs;
+  if (!specs || !specs.length) return null;
+  return specs[id % specs.length] || null;
+}
+
+async function loadAllMd2Specs() {
+  for (let index = 0; index < MD2_SPECS.length; index++) {
+    const entry = MD2_SPECS[index];
     try {
       let model = BotClient.md2Cache.get(entry.model);
       if (!model) {
@@ -559,18 +660,27 @@ function startMd2Loads() {
         BotClient.md2Cache.set(entry.model, model);
       }
       const skinIndex = model.addSkin(entry.skin);
-      // Каталог тела ("/game/models/q2/male/", "/.../female/", "/.../cyborg/")
-      // используется для подгрузки соответствующих w_*.md2 — у каждой модели
-      // игрока свой набор weapon-mesh-ей с правильной позицией ладони.
       const bodyDir = entry.model.slice(0, entry.model.lastIndexOf('/') + 1);
       const weapons = await ensureBodyWeapons(bodyDir);
-      BotClient.md2Specs.push({ model, skinIndex, bodyDir, weapons });
+      BotClient.md2Specs[index] = { model, skinIndex, bodyDir, weapons };
     } catch (err) {
       Console.warn(
         'MD2 spec load failed: ' + entry.model + ' / ' + entry.skin + ': ' + err.message,
       );
     }
-  });
+  }
+}
+
+const MD2_MESH_VERSION = 8;
+
+function startMd2Loads() {
+  if (BotClient.md2MeshVersion === MD2_MESH_VERSION && BotClient.md2LoadPromise) return;
+  BotClient.md2MeshVersion = MD2_MESH_VERSION;
+  BotClient.md2LoadPromise = null;
+  BotClient.md2Cache = new Map();
+  BotClient.weaponPerBody = new Map(); // bodyDir -> { [weaponType]: { model, skinIndex } }
+  BotClient.md2Specs = new Array(MD2_SPECS.length);
+  BotClient.md2LoadPromise = loadAllMd2Specs();
   startViewWeaponMd2Loads();
 }
 
@@ -583,6 +693,18 @@ const Q2_WEAPON_FILES = {
   [WEAPON.PLASMA]: 'w_hyperblaster.md2',
   [WEAPON.ZENIT]: 'w_glauncher.md2',
   [WEAPON.ROCKET]: 'w_rlauncher.md2',
+};
+
+// Скины g_* из pickups/ — размер совпадает с header w_*.md2 (312×183 и т.д.).
+// Общий weapon.png (136×60) не подходит: UV уезжают, текстура «ломается».
+const Q2_PICKUP_SKIN_PATH = '/game/models/q2/pickups/';
+const Q2_WEAPON_SKIN_FILES = {
+  [WEAPON.PISTOL]: 'blaster.png',
+  [WEAPON.SHAFT]: 'chaingun.png',
+  [WEAPON.RAIL]: 'railgun.png',
+  [WEAPON.PLASMA]: 'hyperblaster.png',
+  [WEAPON.ZENIT]: 'glauncher.png',
+  [WEAPON.ROCKET]: 'rlauncher.png',
 };
 
 async function ensureBodyWeapons(bodyDir) {
@@ -616,7 +738,7 @@ async function ensureBodyWeapons(bodyDir) {
       const file = Q2_WEAPON_FILES[key];
       try {
         const model = await MD2Model.load(bodyDir + file, []);
-        const skinIndex = model.addSkin(bodyDir + 'weapon.png');
+        const skinIndex = model.addSkin(Q2_PICKUP_SKIN_PATH + Q2_WEAPON_SKIN_FILES[key]);
         weapons[key] = { model, skinIndex };
       } catch (err) {
         const fb = await getFallback();
@@ -640,7 +762,8 @@ const Q2_VIEW_WEAPON_FILES = {
 };
 
 function startViewWeaponMd2Loads() {
-  if (BotClient.viewWeaponMd2) return;
+  if (BotClient.viewWeaponMd2Version === MD2_MESH_VERSION && BotClient.viewWeaponMd2) return;
+  BotClient.viewWeaponMd2Version = MD2_MESH_VERSION;
   BotClient.viewWeaponMd2 = {};
   Object.keys(Q2_VIEW_WEAPON_FILES).forEach(async (key) => {
     const file = Q2_VIEW_WEAPON_FILES[key];
@@ -670,17 +793,153 @@ function getViewWeaponSpec(weaponType) {
   return spec && spec.model ? spec : null;
 }
 
-function viewWeaponFrames(model, firing) {
+const VIEW_WEAPON_FPS = {
+  putway: 18,
+  active: 14,
+  idle: 7,
+  pow: 22,
+};
+
+const viewWepSwitch = {
+  phase: 'idle',
+  fromType: WEAPON.PISTOL,
+  toType: WEAPON.PISTOL,
+  phaseStart: 0,
+};
+
+function viewWeaponAnimFrames(model, animName) {
   if (!model._viewAnimCache) model._viewAnimCache = {};
-  const key = firing ? 'pow' : 'idle';
-  if (!model._viewAnimCache[key]) {
-    let frames = model.framesByPrefix(key);
-    if (!frames.length && !firing) frames = model.framesByPrefix('active');
-    if (!frames.length) frames = model.framesByPrefix('idle');
+  if (!model._viewAnimCache[animName]) {
+    let frames = model.framesByPrefix(animName);
+    if (!frames.length && animName === 'idle') {
+      frames = model.framesByPrefix('active');
+      if (!frames.length) frames = model.framesByPrefix('idle');
+    }
     if (!frames.length && model.frameBuffers && model.frameBuffers.length) frames = [0];
-    model._viewAnimCache[key] = { frames };
+    model._viewAnimCache[animName] = {
+      frames,
+      once: animName === 'putway' || animName === 'active',
+      fps: VIEW_WEAPON_FPS[animName] || 10,
+    };
   }
-  return model._viewAnimCache[key];
+  return model._viewAnimCache[animName];
+}
+
+function advanceViewWeaponAnim(frameSet, startTime) {
+  const frames = frameSet.frames;
+  if (!frames.length) return { done: true, ia: 0, ib: 0, lerp: 0 };
+  const fps = frameSet.fps || 10;
+  const now = Date.now();
+  let cursor =
+    startTime > 0 ? ((now - startTime) / 1000) * fps : (now / 1000) * fps;
+  if (frameSet.once) {
+    if (cursor >= frames.length - 1) {
+      const last = frames[frames.length - 1];
+      return { done: true, ia: last, ib: last, lerp: 0 };
+    }
+    const ia = Math.floor(cursor);
+    const ib = Math.min(frames.length - 1, ia + 1);
+    return { done: false, ia: frames[ia], ib: frames[ib], lerp: cursor - ia };
+  }
+  cursor -= Math.floor(cursor / frames.length) * frames.length;
+  const ia = Math.floor(cursor);
+  const ib = (ia + 1) % frames.length;
+  return { done: false, ia: frames[ia], ib: frames[ib], lerp: cursor - ia };
+}
+
+function beginViewWeaponSwitch(fromType, toType) {
+  if (fromType === toType) return;
+  let actualFrom = fromType;
+  if (viewWepSwitch.phase === 'putaway') actualFrom = viewWepSwitch.fromType;
+  else if (viewWepSwitch.phase === 'active') actualFrom = viewWepSwitch.toType;
+  if (actualFrom === toType) return;
+  const oldSpec = getViewWeaponSpec(actualFrom);
+  const putFrames =
+    oldSpec && viewWeaponAnimFrames(oldSpec.model, 'putway').frames.length
+      ? viewWeaponAnimFrames(oldSpec.model, 'putway').frames
+      : null;
+  if (!putFrames || !putFrames.length) {
+    const newSpec = getViewWeaponSpec(toType);
+    const activeFrames =
+      newSpec && viewWeaponAnimFrames(newSpec.model, 'active').frames.length
+        ? viewWeaponAnimFrames(newSpec.model, 'active').frames
+        : null;
+    if (!activeFrames || !activeFrames.length) {
+      viewWepSwitch.phase = 'idle';
+      return;
+    }
+    viewWepSwitch.phase = 'active';
+    viewWepSwitch.fromType = actualFrom;
+    viewWepSwitch.toType = toType;
+    viewWepSwitch.phaseStart = Date.now();
+    return;
+  }
+  viewWepSwitch.phase = 'putaway';
+  viewWepSwitch.fromType = actualFrom;
+  viewWepSwitch.toType = toType;
+  viewWepSwitch.phaseStart = Date.now();
+}
+
+function updateViewWeaponSwitch() {
+  if (viewWepSwitch.phase === 'idle') return;
+  const weaponType = viewWepSwitch.phase === 'putaway' ? viewWepSwitch.fromType : viewWepSwitch.toType;
+  const animName = viewWepSwitch.phase === 'putaway' ? 'putway' : 'active';
+  const wSpec = getViewWeaponSpec(weaponType);
+  if (!wSpec) {
+    viewWepSwitch.phase = 'idle';
+    return;
+  }
+  const frameSet = viewWeaponAnimFrames(wSpec.model, animName);
+  const adv = advanceViewWeaponAnim(frameSet, viewWepSwitch.phaseStart);
+  if (!adv.done) return;
+  if (viewWepSwitch.phase === 'putaway') {
+    const newSpec = getViewWeaponSpec(viewWepSwitch.toType);
+    const activeFrames =
+      newSpec && viewWeaponAnimFrames(newSpec.model, 'active').frames.length
+        ? viewWeaponAnimFrames(newSpec.model, 'active').frames
+        : null;
+    if (activeFrames && activeFrames.length) {
+      viewWepSwitch.phase = 'active';
+      viewWepSwitch.phaseStart = Date.now();
+    } else {
+      viewWepSwitch.phase = 'idle';
+    }
+    return;
+  }
+  viewWepSwitch.phase = 'idle';
+}
+
+function resolveViewWeaponPose(myBot) {
+  updateViewWeaponSwitch();
+  const now = Date.now();
+  const switching = viewWepSwitch.phase !== 'idle';
+  const firing =
+    !switching && myBot.weapon.shooting && now < myBot.weapon.dead && myBot.weapon.type !== WEAPON.SHAFT;
+
+  let weaponType = myBot.weapon.type;
+  let animName = firing ? 'pow' : 'idle';
+  let startTime = 0;
+
+  if (viewWepSwitch.phase === 'putaway') {
+    weaponType = viewWepSwitch.fromType;
+    animName = 'putway';
+    startTime = viewWepSwitch.phaseStart;
+  } else if (viewWepSwitch.phase === 'active') {
+    weaponType = viewWepSwitch.toType;
+    animName = 'active';
+    startTime = viewWepSwitch.phaseStart;
+  } else if (firing) {
+    const lifetime = WeaponClient.wea_tabl[weaponType].lifetime || 100;
+    startTime = myBot.weapon.dead - lifetime;
+  }
+
+  const myBodySpec = pickMD2Spec(myBot.id || 0);
+  const wSpec = getViewWeaponSpec(weaponType) || getWeaponSpec(myBodySpec, weaponType);
+  if (!wSpec) return null;
+
+  const frameSet = viewWeaponAnimFrames(wSpec.model, animName);
+  const adv = advanceViewWeaponAnim(frameSet, startTime);
+  return { wSpec, ia: adv.ia, ib: adv.ib, lerp: adv.lerp };
 }
 
 class BotClient {
@@ -696,6 +955,13 @@ class BotClient {
 
     this.begin_of_walk = 0;
     this.seria = 0;
+    this.spawnStartTime = 0;
+    this.deathStartTime = 0;
+    this.painStartTime = 0;
+    this.painKickX = 0;
+    this.painKickY = 0;
+    this.deathSlideX = 0;
+    this.deathSlideY = 0;
 
     this.addFrame(server_time, serverBot, isCamera);
   }
@@ -709,12 +975,18 @@ class BotClient {
     this.my_time = Date.now();
 
     if (this.alive && !serverBot.alive) this.deathStartTime = Date.now();
-    if (!this.alive && serverBot.alive) this.deathStartTime = 0;
+    if (!this.alive && serverBot.alive) {
+      this.deathStartTime = 0;
+    }
     this.alive = serverBot.alive;
     this.power = serverBot.power;
     this.shield = serverBot.shield;
     this.health_ratio = serverBot.health_ratio !== undefined ? serverBot.health_ratio : 1;
+    const prevWeapon = this.weapon.type;
     this.weapon.setType(serverBot.weapon);
+    if (isCamera && prevWeapon !== serverBot.weapon) {
+      beginViewWeaponSwitch(prevWeapon, serverBot.weapon);
+    }
     if (serverBot.shoot) this.weapon.shoot();
     if (serverBot.seria !== this.seria) this.seria = serverBot.seria;
 
@@ -752,6 +1024,14 @@ class BotClient {
   update() {
     if (!this.alive) {
       this.begin_of_walk = 0;
+      if (this.deathSlideX || this.deathSlideY) {
+        this.deathSlideX *= 0.9;
+        this.deathSlideY *= 0.9;
+        if (Math.abs(this.deathSlideX) < 0.003) {
+          this.deathSlideX = 0;
+          this.deathSlideY = 0;
+        }
+      }
       return;
     }
     const new_time = this.new_frame_time;
@@ -773,20 +1053,75 @@ class BotClient {
     } else if (this.begin_of_walk === 0) {
       this.begin_of_walk = Date.now();
     }
+
+    if (this.painKickX || this.painKickY) {
+      this.painKickX *= 0.84;
+      this.painKickY *= 0.84;
+      if (Math.abs(this.painKickX) < 0.002) {
+        this.painKickX = 0;
+        this.painKickY = 0;
+      }
+    }
   }
 
   render(camera) {
     if (this.dynent === camera) return;
-    const fog = getEntityFog(camera, this.dynent.pos);
-    if (fog > 0.92) return;
-    if (!hasLineOfSightTo(camera, this.dynent.pos)) return;
+    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
+    if (this.spawnStartTime && !spawn.spawning) this.spawnStartTime = 0;
+
     if (!this.alive) {
       const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
-      if (dt > CORPSE_LIFETIME_MS) return;
+      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
+    }
+
+    const spec = pickMD2Spec(this.id);
+    if (!spec || !spec.model.ready()) return;
+
+    if (spawn.spawning) {
+      if (spawn.alpha > 0.002) {
+        renderBotMD2(camera, this, spec, 0, spawn.alpha, spawn.scale);
+      }
+      return;
+    }
+
+    renderBotMD2(camera, this, spec, 0);
+  }
+
+  renderWireDepth(camera) {
+    if (this.dynent === camera) return;
+    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
+    if (this.spawnStartTime && !spawn.spawning) this.spawnStartTime = 0;
+    if (!this.alive) {
+      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
+      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
     }
     const spec = pickMD2Spec(this.id);
     if (!spec || !spec.model.ready()) return;
-    renderBotMD2(camera, this, spec, fog);
+    if (spawn.spawning) {
+      if (spawn.alpha > 0.002) {
+        renderBotWirePhase(camera, this, spec, 'depth', spawn.alpha, spawn.scale);
+      }
+      return;
+    }
+    renderBotWirePhase(camera, this, spec, 'depth', 1, 1);
+  }
+
+  renderWireDraw(camera) {
+    if (this.dynent === camera) return;
+    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
+    if (!this.alive) {
+      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
+      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
+    }
+    const spec = pickMD2Spec(this.id);
+    if (!spec || !spec.model.ready()) return;
+    if (spawn.spawning) {
+      if (spawn.alpha > 0.002) {
+        renderBotWirePhase(camera, this, spec, 'wire', spawn.alpha, spawn.scale);
+      }
+      return;
+    }
+    renderBotWirePhase(camera, this, spec, 'wire', 1, 1);
   }
 
   // Глубина бота в карту теней (light-space). Кастит и живой моб, и труп.
@@ -801,7 +1136,7 @@ class BotClient {
     const pose = botPose(this, spec);
     if (!pose) return;
     pose.model.renderDepth(pose.m, pose.fa, pose.fb, pose.lerp, lightVP);
-    if (this.weapon) {
+    if (this.alive && this.weapon) {
       const wSpec = getWeaponSpec(spec, this.weapon.type);
       if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
         const last = wSpec.model.frameBuffers.length - 1;
@@ -815,36 +1150,21 @@ class BotClient {
   renderStats(camera) {
     if (this.dynent === camera) return;
     if (!this.alive) return;
-    const vp = state.viewProj3D;
-    if (!vp) return;
-
-    const headY = MD2_Y_OFFSET + 1.55;
-    const wx = this.dynent.pos.x;
-    const wz = this.dynent.pos.y;
-    const cx = vp[0] * wx + vp[4] * headY + vp[8] * wz + vp[12];
-    const cy = vp[1] * wx + vp[5] * headY + vp[9] * wz + vp[13];
-    const cw = vp[3] * wx + vp[7] * headY + vp[11] * wz + vp[15];
-    if (cw <= 0.05) return;
-    const nx = cx / cw;
-    const ny = cy / cw;
-    if (nx < -1.0 || nx > 1.0 || ny < -1.0 || ny > 1.0) return;
-    if (cw > 40) return;
-    const fog = getEntityFog(camera, this.dynent.pos);
-    if (fog > 0.92) return;
     if (!hasLineOfSightTo(camera, this.dynent.pos)) return;
 
-    // Оверлеи учитывают туман (растворяются вдали) и освещение карты
-    // (тусклее в тёмных углах, ярче у факелов) — как сами мобы.
+    const head = botHeadScreenPos(this);
+    if (!head) return;
+
     const lr = state.LevelRender;
     const lum = lr && lr.getLightLevel ? lr.getLightLevel(this.dynent.pos.x, this.dynent.pos.y) : 1;
     const light = Math.max(0.35, Math.min(1.15, lum));
-    const vis = Math.max(0, 1 - fog) * light;
+    const vis = light;
 
     const nick = state.gameClient.getNickById(this.id);
-    state.text.render([nx, ny + 0.02], 2, nick, 1, { center: true, alpha: 2 * vis });
+    state.text.render([head.nx, head.ny + 0.02], 2, nick, 1, { center: true, alpha: 2 * vis });
 
     const hp = Math.max(0, Math.min(1, this.health_ratio !== undefined ? this.health_ratio : 1));
-    drawHpBar(nx, ny - 0.03, 0.16, 0.012, hp, vis);
+    drawHpBar(head.nx, head.ny - 0.03, 0.16, 0.012, hp, vis);
   }
 }
 
@@ -868,6 +1188,33 @@ BotClient.load = function () {
 BotClient.SPEED = Bot.SPEED;
 
 BotClient.renderFirstPersonWeapon = renderFirstPersonWeapon;
+BotClient.renderFirstPersonWeaponWire = renderFirstPersonWeaponWire;
+
+Event.on('cl_botpain', function (pos, dir, id) {
+  const gc = state.gameClient;
+  if (!gc) return;
+  const bot = gc.getBotById(id);
+  if (!bot || !bot.alive) return;
+
+  let severity = 1;
+  if (dir) {
+    const dlen = dir.length();
+    const nearBot = Math.hypot(pos.x - bot.dynent.pos.x, pos.y - bot.dynent.pos.y) < 1.2;
+    if (nearBot && dlen > 0.001 && dlen <= WEAPON.RADIUS_ROCKET + 0.5) severity = 3;
+    else if (dlen > 0.015) severity = 2;
+  }
+
+  const now = Date.now();
+  if (bot.painStartTime && now - bot.painStartTime < PAIN_COOLDOWN_MS && severity < 3) return;
+
+  bot.painStartTime = now;
+  if (dir && dir.length() > 1e-6) {
+    const len = dir.length();
+    const kick = severity === 3 ? 0.24 : severity === 2 ? 0.09 : 0.04;
+    bot.painKickX = (dir.x / len) * kick;
+    bot.painKickY = (dir.y / len) * kick;
+  }
+});
 
 state.Bot = BotClient;
 export { BotClient };
