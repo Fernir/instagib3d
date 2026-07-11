@@ -108,6 +108,7 @@ export function initMobileControls(canvas) {
       }
 
       if (Console?.show) {
+        Console.focusMobileInput?.();
         e.preventDefault();
         continue;
       }
@@ -164,9 +165,11 @@ export function initMobileControls(canvas) {
       const t = e.changedTouches[i];
 
       if (t.identifier === mc.consoleTouchId) {
-        if (Console?.toggle) Console.toggle();
-        else if (Console) {
+        if (Console?.toggle) {
+          Console.toggle();
+        } else if (Console) {
           Console.show = !Console.show;
+          Console.syncMobileInputVisibility?.();
           if (Console.show) Console.focusMobileInput?.();
           else Console.blurMobileInput?.();
         }

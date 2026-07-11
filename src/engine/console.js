@@ -212,18 +212,28 @@ Console.ensureMobileInput = function () {
   el.autocapitalize = 'off';
   el.autocorrect = 'off';
   el.spellcheck = false;
-  el.setAttribute('enterkeyhint', 'done');
+  el.setAttribute('enterkeyhint', 'send');
   el.setAttribute('inputmode', 'text');
+  el.setAttribute('aria-label', 'Console command');
   el.style.position = 'fixed';
   el.style.left = '0';
-  el.style.top = '0';
-  el.style.width = '1px';
-  el.style.height = '1px';
+  el.style.right = '0';
+  el.style.bottom = '0';
+  el.style.width = '100%';
+  el.style.height = '48px';
+  el.style.fontSize = '16px';
+  el.style.lineHeight = '48px';
   el.style.opacity = '0.01';
+  el.style.color = 'transparent';
+  el.style.background = 'transparent';
   el.style.border = 'none';
-  el.style.padding = '0';
+  el.style.outline = 'none';
+  el.style.padding = '0 8px';
   el.style.margin = '0';
-  el.style.zIndex = '9999';
+  el.style.zIndex = '10000';
+  el.style.caretColor = 'transparent';
+  el.style.pointerEvents = 'none';
+  el.style.display = 'none';
   document.body.appendChild(el);
 
   el.addEventListener('input', () => {
@@ -231,6 +241,7 @@ Console.ensureMobileInput = function () {
   });
   el.addEventListener('keydown', (e) => {
     if (!Console.show) return;
+    e.stopPropagation();
     if (e.key === 'Enter') {
       Console.dispatchCommand(Console.current_command);
       Console.current_command = '';
@@ -268,10 +279,20 @@ Console.ensureMobileInput = function () {
   return el;
 };
 
+Console.syncMobileInputVisibility = function () {
+  const el = Console._mobileInput;
+  if (!el) return;
+  const active = Console.show && isMobileControls();
+  el.style.display = active ? 'block' : 'none';
+  el.style.pointerEvents = active ? 'auto' : 'none';
+  if (!active) el.blur();
+};
+
 Console.focusMobileInput = function () {
-  if (!isMobileControls()) return;
+  if (!isMobileControls() || !Console.show) return;
   const el = Console.ensureMobileInput();
   if (!el) return;
+  Console.syncMobileInputVisibility();
   el.value = Console.current_command || '';
   el.focus({ preventScroll: true });
   const len = el.value.length;
@@ -279,11 +300,13 @@ Console.focusMobileInput = function () {
 };
 
 Console.blurMobileInput = function () {
+  Console.syncMobileInputVisibility();
   Console._mobileInput?.blur();
 };
 
 Console.toggle = function () {
   Console.show = !Console.show;
+  Console.syncMobileInputVisibility();
   if (Console.show) {
     if (document.pointerLockElement) document.exitPointerLock?.();
     Console.focusMobileInput();

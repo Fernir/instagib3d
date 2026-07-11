@@ -180,6 +180,13 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       'keydown',
       (event) => {
         if (isConsoleToggleKey(event) || Console.show) {
+          if (
+            isMobileControls() &&
+            Console.show &&
+            document.activeElement === Console._mobileInput
+          ) {
+            return;
+          }
           Event.emit('keydown', event.key, event.code);
           event.preventDefault();
           return;
