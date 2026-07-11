@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   QUALITY_TIERS,
   TARGET_FPS,
+  canDowngradeQuality,
   detectInitialQualityTier,
   isAndroidDevice,
   isMobileLikeDevice,
+  shouldStopQualityDowngrade,
 } from '@/engine/quality.js';
 
 describe('quality', () => {
@@ -56,5 +58,13 @@ describe('quality', () => {
   it('targets 60 fps and exposes ordered tiers', () => {
     expect(TARGET_FPS).toBe(60);
     expect(QUALITY_TIERS).toEqual(['high', 'medium', 'low', 'minimal']);
+  });
+
+  it('keeps downgrading until fps reaches target', () => {
+    expect(shouldStopQualityDowngrade(59)).toBe(false);
+    expect(shouldStopQualityDowngrade(60)).toBe(true);
+    expect(shouldStopQualityDowngrade(72)).toBe(true);
+    expect(canDowngradeQuality(2, 1)).toBe(true);
+    expect(canDowngradeQuality(0, 0.55)).toBe(false);
   });
 });

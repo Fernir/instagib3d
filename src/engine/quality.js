@@ -88,7 +88,15 @@ function clampShadowRes(res) {
   return Math.max(256, Math.min(res | 0, maxTex));
 }
 
-const DOWNGRADE_COOLDOWN_MS = 10000;
+const STABILIZE_AFTER_DOWNGRADE_MS = 3500;
+
+export function canDowngradeQuality(tierIndex, dprScale) {
+  return tierIndex > 0 || dprScale > 0.55;
+}
+
+export function shouldStopQualityDowngrade(avgFps, targetFps = TARGET_FPS) {
+  return avgFps >= targetFps;
+}
 
 export function initQuality(userOptions = {}) {
   const forced = userOptions.quality;
@@ -139,14 +147,14 @@ export function initQuality(userOptions = {}) {
 
     tick(fps) {
       if (!this.auto || !fps) return;
-      if (Date.now() - this.lastAutoDowngradeMs < DOWNGRADE_COOLDOWN_MS) return;
+      if (Date.now() - this.lastAutoDowngradeMs < STABILIZE_AFTER_DOWNGRADE_MS) return;
 
       this.fpsHistory.push(fps);
-      if (this.fpsHistory.length > 2) this.fpsHistory.shift();
+      if (this.fpsHistory.length > 3) this.fpsHistory.shift();
       if (this.fpsHistory.length < 2) return;
 
       const avg = this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
-      if (avg >= TARGET_FPS - 2) {
+      if (shouldStopQualityDowngrade(avg)) {
         this.downgradeHold = 0;
         return;
       }
@@ -154,15 +162,17 @@ export function initQuality(userOptions = {}) {
       this.downgradeHold += 1;
       if (this.downgradeHold < 2) return;
 
+      if (!canDowngradeQuality(this.tierIndex, this.dprScale)) {
+        this.downgradeHold = 0;
+        return;
+      }
+
       if (this.tierIndex > 0) {
         this.tierIndex -= 1;
         this.tier = QUALITY_TIERS[this.tierIndex];
         this.dprScale = 1;
-      } else if (this.dprScale > 0.55) {
-        this.dprScale = Math.max(0.55, this.dprScale - 0.08);
       } else {
-        this.downgradeHold = 0;
-        return;
+        this.dprScale = Math.max(0.55, this.dprScale - 0.08);
       }
 
       this.fpsHistory = [];
@@ -175,7 +185,8 @@ export function initQuality(userOptions = {}) {
           (this.dprScale < 1 ? ' (dpr×' + this.dprScale.toFixed(2) + ')' : '') +
           ' — ' +
           Math.round(avg) +
-          ' fps',
+          ' fps, target ' +
+          TARGET_FPS,
       );
     },
   };
