@@ -87,3 +87,52 @@ canvas#plot {
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
+
+.mobile-install-hint {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 8500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(8, 10, 14, 0.92);
+  color: #e8eaed;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: clamp(12px, 2.8vw, 14px);
+  pointer-events: auto;
+}
+
+.mobile-install-hint__text {
+  flex: 1;
+  line-height: 1.35;
+}
+
+.mobile-install-hint__install,
+.mobile-install-hint__close {
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mobile-install-hint__install {
+  padding: 8px 14px;
+  background: linear-gradient(90deg, #c87820, #f0c060);
+  color: #111;
+  font-weight: 700;
+}
+
+.mobile-install-hint__close {
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+}

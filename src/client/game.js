@@ -4,6 +4,7 @@ import { state } from '@/core/runtime-state.js';
 
 import { isWireframe } from '@/engine/mesh.js';
 import { isMobileControls } from '@/engine/mobilecontrols.js';
+import { enterMobileImmersiveMode } from '@/engine/fullscreen.js';
 import { uiTextSizeForHalfNdc } from '@/engine/render_text.js';
 import { Shader } from '@/engine/shader.js';
 
@@ -254,6 +255,7 @@ class GameClient {
     this.handlePlayClick = function () {
       if (playing || !transport) return false;
       state.unlockAudio?.();
+      if (isMobileControls()) enterMobileImmersiveMode();
       playing = true;
       state.playing = true;
       state.godMode = false;

@@ -88,6 +88,8 @@ function clampShadowRes(res) {
   return Math.max(256, Math.min(res | 0, maxTex));
 }
 
+const DOWNGRADE_COOLDOWN_MS = 10000;
+
 export function initQuality(userOptions = {}) {
   const forced = userOptions.quality;
   const auto = userOptions.qualityAuto !== false && !forced;
@@ -98,13 +100,12 @@ export function initQuality(userOptions = {}) {
   const mgr = {
     tier: QUALITY_TIERS[initialIndex],
     tierIndex: initialIndex,
-    maxTierIndex: initialIndex,
     auto,
     settings: null,
     fpsHistory: [],
-    upgradeHold: 0,
     downgradeHold: 0,
     dprScale: 1,
+    lastAutoDowngradeMs: 0,
 
     apply() {
       const preset = QUALITY_PRESETS[this.tier];
@@ -126,7 +127,6 @@ export function initQuality(userOptions = {}) {
       if (idx < 0) return;
       this.tier = name;
       this.tierIndex = idx;
-      if (opts.raiseCap) this.maxTierIndex = Math.max(this.maxTierIndex, idx);
       if (opts.resetDpr !== false) this.dprScale = 1;
       this.apply();
       Console.info('Quality: ' + name);
@@ -134,62 +134,49 @@ export function initQuality(userOptions = {}) {
 
     setAuto(enabled) {
       this.auto = !!enabled;
-      Console.info('Quality auto: ' + (this.auto ? 'on' : 'off'));
+      Console.info('Quality auto: ' + (this.auto ? 'on (downgrade only)' : 'off'));
     },
 
     tick(fps) {
       if (!this.auto || !fps) return;
+      if (Date.now() - this.lastAutoDowngradeMs < DOWNGRADE_COOLDOWN_MS) return;
+
       this.fpsHistory.push(fps);
       if (this.fpsHistory.length > 2) this.fpsHistory.shift();
       if (this.fpsHistory.length < 2) return;
 
       const avg = this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
-
-      if (avg < TARGET_FPS - 2) {
-        this.downgradeHold += 1;
-        if (this.downgradeHold >= 2) {
-          if (this.tierIndex > 0) {
-            this.tierIndex -= 1;
-            this.tier = QUALITY_TIERS[this.tierIndex];
-            this.dprScale = 1;
-            this.fpsHistory = [];
-            this.upgradeHold = 0;
-            this.downgradeHold = 0;
-            this.apply();
-            Console.info(
-              'Quality lowered to ' + this.tier + ' (' + Math.round(avg) + ' fps, target ' + TARGET_FPS + ')',
-            );
-          } else if (this.dprScale > 0.55) {
-            this.dprScale = Math.max(0.55, this.dprScale - 0.08);
-            this.fpsHistory = [];
-            this.downgradeHold = 0;
-            this.apply();
-            Console.info(
-              'Quality DPR scale ' + this.dprScale.toFixed(2) + ' (' + Math.round(avg) + ' fps)',
-            );
-          } else {
-            this.downgradeHold = 0;
-          }
-          return;
-        }
-      } else {
+      if (avg >= TARGET_FPS - 2) {
         this.downgradeHold = 0;
-      }
-
-      if (avg > TARGET_FPS + 3 && this.tierIndex < this.maxTierIndex) {
-        this.upgradeHold += 1;
-        if (this.upgradeHold >= 5) {
-          this.tierIndex += 1;
-          this.tier = QUALITY_TIERS[this.tierIndex];
-          this.dprScale = 1;
-          this.fpsHistory = [];
-          this.upgradeHold = 0;
-          this.apply();
-          Console.info('Quality raised to ' + this.tier);
-        }
         return;
       }
-      this.upgradeHold = 0;
+
+      this.downgradeHold += 1;
+      if (this.downgradeHold < 2) return;
+
+      if (this.tierIndex > 0) {
+        this.tierIndex -= 1;
+        this.tier = QUALITY_TIERS[this.tierIndex];
+        this.dprScale = 1;
+      } else if (this.dprScale > 0.55) {
+        this.dprScale = Math.max(0.55, this.dprScale - 0.08);
+      } else {
+        this.downgradeHold = 0;
+        return;
+      }
+
+      this.fpsHistory = [];
+      this.downgradeHold = 0;
+      this.lastAutoDowngradeMs = Date.now();
+      this.apply();
+      Console.info(
+        'Quality lowered to ' +
+          this.tier +
+          (this.dprScale < 1 ? ' (dpr×' + this.dprScale.toFixed(2) + ')' : '') +
+          ' — ' +
+          Math.round(avg) +
+          ' fps',
+      );
     },
   };
 
@@ -202,7 +189,7 @@ export function initQuality(userOptions = {}) {
         Console.info(
           'Quality: ' +
             mgr.tier +
-            (mgr.auto ? ' (auto, target ' + TARGET_FPS + ' fps)' : '') +
+            (mgr.auto ? ' (auto downgrade, target ' + TARGET_FPS + ' fps)' : '') +
             ', dpr=' +
             mgr.settings.dprMax.toFixed(2),
         );
@@ -215,11 +202,11 @@ export function initQuality(userOptions = {}) {
       }
       if (QUALITY_PRESETS[v]) {
         mgr.setAuto(false);
-        mgr.setTier(v, { raiseCap: true });
+        mgr.setTier(v);
       }
     });
   }
 
-  Console.info('Quality: ' + mgr.tier + (mgr.auto ? ' (auto, target ' + TARGET_FPS + ' fps)' : ''));
+  Console.info('Quality: ' + mgr.tier + (mgr.auto ? ' (auto downgrade)' : ''));
   return mgr;
 }

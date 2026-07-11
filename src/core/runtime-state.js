@@ -26,6 +26,7 @@ export const state = {
   wireframePass: false,
   localRoom: null,
   playing: false,
+  wakeLock: null,
   // Нормализованные координаты курсора в overlay-режиме (когда state.playing=false
   // и pointer lock не активен). Используется для hover-эффектов кнопок в HUD.
   overlayMouse: null,

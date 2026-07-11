@@ -3,6 +3,7 @@ import { state, VK } from '@/core/runtime-state.js';
 
 import { initGL } from '@/engine/glcontext.js';
 import { initMobileControls, isMobileControls, mobileJoyAxis, tickMobileControls } from '@/engine/mobilecontrols.js';
+import { initMobileDisplay, releaseWakeLock } from '@/engine/fullscreen.js';
 import { initQuality } from '@/engine/quality.js';
 import {
   buildLoadingChecks,
@@ -409,6 +410,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       bindFirstGesture();
       Console.load();
       initQuality(options);
+      initMobileDisplay(canvas);
       text = new Text();
       state.text = text;
 
@@ -440,6 +442,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
         state.localRoom = null;
       }
       if (state.msaa) state.msaa.dispose();
+      releaseWakeLock();
       hideLoadingOverlay();
       unbindViewport?.();
       unbindViewport = null;
