@@ -57,7 +57,13 @@ export class ShadowMap {
   }
 
   setResolution(res) {
-    const r = Math.max(256, res | 0);
+    const r = res | 0;
+    if (r <= 0) {
+      this.dispose();
+      this.res = 0;
+      this.ok = false;
+      return;
+    }
     if (r === this.res && this.fbo) return;
     this.dispose();
     this.res = r;
@@ -65,7 +71,7 @@ export class ShadowMap {
   }
 
   ensure() {
-    if (!this.depthTexSupported) return false;
+    if (!this.depthTexSupported || this.res <= 0) return false;
     if (this.fbo) return true;
     const gl = state.gl;
     const r = this.res;

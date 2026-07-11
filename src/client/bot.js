@@ -677,6 +677,7 @@ function pickMD2Spec(id) {
 }
 
 async function loadAllMd2Specs() {
+  BotClient.md2LoadsDone = false;
   for (let index = 0; index < MD2_SPECS.length; index++) {
     const entry = MD2_SPECS[index];
     try {
@@ -695,6 +696,7 @@ async function loadAllMd2Specs() {
       );
     }
   }
+  BotClient.md2LoadsDone = true;
 }
 
 const MD2_MESH_VERSION = 8;
@@ -1221,7 +1223,8 @@ BotClient.isMutant = function (id) {
 };
 
 BotClient.ready = function () {
-  return true;
+  if (!BotClient.md2LoadPromise) return false;
+  return BotClient.md2LoadsDone === true;
 };
 
 BotClient.load = function () {

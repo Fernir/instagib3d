@@ -125,10 +125,10 @@ class LevelRender3D {
       fbo_visible.unbind();
     }
 
-    const tex_ground1 = new Texture('/game/textures/fx/tex_grass.jpg');
-    const tex_wall = new Texture('/game/textures/fx/wall.jpg');
-    const tex_lava = new Texture('/game/textures/fx/lava.jpg');
-    const tex_bridge = new Texture('/game/textures/fx/wall.jpg');
+    const tex_ground1 = new Texture('/game/textures/fx/tex_grass.jpg', { wrap: gl.REPEAT });
+    const tex_wall = new Texture('/game/textures/fx/wall.jpg', { wrap: gl.REPEAT });
+    const tex_lava = new Texture('/game/textures/fx/lava.jpg', { wrap: gl.REPEAT });
+    const tex_bridge = new Texture('/game/textures/fx/wall.jpg', { wrap: gl.REPEAT });
     const tex_noise = new Texture('/game/textures/fx/noise.png');
     let tex_ground2 = null;
 
@@ -1332,6 +1332,7 @@ class LevelRender3D {
       if (!settings) return;
       visInterval = settings.visMapInterval || 4;
       if (settings.shadowRes) shadowMap.setResolution(settings.shadowRes);
+      else if (settings.shadows === false) shadowMap.setResolution(0);
       fog.setEnabled(settings.fog !== false);
       fog.setSlices(settings.fogSlices ?? 8);
       fog.setResShift(settings.fogResShift ?? 2);

@@ -4,6 +4,13 @@ import { state, VK } from '@/core/runtime-state.js';
 import { initGL } from '@/engine/glcontext.js';
 import { initMobileControls, isMobileControls, mobileJoyAxis, tickMobileControls } from '@/engine/mobilecontrols.js';
 import { initQuality } from '@/engine/quality.js';
+import {
+  buildLoadingChecks,
+  ensureLoadingOverlay,
+  getLoadingProgress,
+  hideLoadingOverlay,
+  updateLoadingOverlay,
+} from '@/engine/loading.js';
 import { bindViewportResize, resizeGameCanvas } from '@/engine/viewport.js';
 import { Howl, Howler } from 'howler';
 
@@ -342,13 +349,25 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   function renderLoading() {
     if (gameReady()) {
+      hideLoadingOverlay();
       renderLoop();
       return;
     }
     if (!assetsStarted) startAssetLoads();
-    if (textReady()) {
-      text.render([0, 0], 2, '#rLoading...', 2, { center: true });
+    const gl = state.gl;
+    if (gl) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, state.canvas.width, state.canvas.height);
+      gl.clearColor(0.05, 0.06, 0.08, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
     }
+    const progress = getLoadingProgress(
+      buildLoadingChecks({
+        textReady,
+        gameClient,
+      }),
+    );
+    updateLoadingOverlay(progress);
     Console.render();
     animationId = requestAnimationFrame(renderLoading);
   }
@@ -393,6 +412,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       text = new Text();
       state.text = text;
 
+      ensureLoadingOverlay();
       renderLoading();
 
       function waitForReady() {
@@ -420,6 +440,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
         state.localRoom = null;
       }
       if (state.msaa) state.msaa.dispose();
+      hideLoadingOverlay();
       unbindViewport?.();
       unbindViewport = null;
       gameClient = null;

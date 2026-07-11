@@ -3,7 +3,8 @@ import { state } from '@/core/runtime-state.js';
 
 import { resizeGameCanvas } from './viewport.js';
 
-export const QUALITY_TIERS = ['high', 'medium', 'low'];
+export const TARGET_FPS = 60;
+export const QUALITY_TIERS = ['high', 'medium', 'low', 'minimal'];
 
 export const QUALITY_PRESETS = {
   high: {
@@ -39,6 +40,17 @@ export const QUALITY_PRESETS = {
     visMapInterval: 12,
     fogResShift: 3,
   },
+  minimal: {
+    dprMax: 0.85,
+    msaaSamples: 0,
+    shadowRes: 256,
+    shadows: false,
+    fog: false,
+    fogSlices: 0,
+    depthPrepass: false,
+    visMapInterval: 20,
+    fogResShift: 3,
+  },
 };
 
 export function isMobileLikeDevice(nav = typeof navigator !== 'undefined' ? navigator : null, win) {
@@ -46,24 +58,31 @@ export function isMobileLikeDevice(nav = typeof navigator !== 'undefined' ? navi
   const w = win || (typeof window !== 'undefined' ? window : null);
   const coarse = w?.matchMedia?.('(pointer: coarse)')?.matches;
   const touch = nav.maxTouchPoints > 1;
-  const ua = /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(nav.userAgent || '');
+  const ua = nav.userAgent || '';
+  const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
   const small = w ? w.innerWidth <= 1280 : false;
-  return ua || (coarse && touch) || (touch && small);
+  return mobileUa || (coarse && touch) || (touch && small);
+}
+
+export function isAndroidDevice(nav = typeof navigator !== 'undefined' ? navigator : null) {
+  return /Android/i.test(nav?.userAgent || '');
 }
 
 export function detectInitialQualityTier(nav = typeof navigator !== 'undefined' ? navigator : null, win) {
   const mobile = isMobileLikeDevice(nav, win);
   const mem = nav?.deviceMemory || 0;
   const cores = nav?.hardwareConcurrency || 4;
+  if (isAndroidDevice(nav)) return 'low';
   if (mobile) {
-    if (mem > 0 && mem <= 2) return 'low';
-    return 'medium';
+    if (mem > 0 && mem <= 2) return 'minimal';
+    return 'low';
   }
   if (cores <= 4 || (mem > 0 && mem <= 4)) return 'medium';
   return 'high';
 }
 
 function clampShadowRes(res) {
+  if (!res) return 0;
   const gl = state.gl;
   const maxTex = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096 : 4096;
   return Math.max(256, Math.min(res | 0, maxTex));
@@ -84,13 +103,17 @@ export function initQuality(userOptions = {}) {
     settings: null,
     fpsHistory: [],
     upgradeHold: 0,
+    downgradeHold: 0,
+    dprScale: 1,
 
     apply() {
       const preset = QUALITY_PRESETS[this.tier];
+      const dprMax = Math.max(0.5, preset.dprMax * this.dprScale);
       this.settings = {
         ...preset,
         tier: this.tier,
-        shadowRes: clampShadowRes(preset.shadowRes),
+        dprMax,
+        shadowRes: preset.shadows ? clampShadowRes(preset.shadowRes) : 0,
       };
       state.quality = this.settings;
       if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
@@ -104,6 +127,7 @@ export function initQuality(userOptions = {}) {
       this.tier = name;
       this.tierIndex = idx;
       if (opts.raiseCap) this.maxTierIndex = Math.max(this.maxTierIndex, idx);
+      if (opts.resetDpr !== false) this.dprScale = 1;
       this.apply();
       Console.info('Quality: ' + name);
     },
@@ -116,24 +140,48 @@ export function initQuality(userOptions = {}) {
     tick(fps) {
       if (!this.auto || !fps) return;
       this.fpsHistory.push(fps);
-      if (this.fpsHistory.length > 3) this.fpsHistory.shift();
-      if (this.fpsHistory.length < 3) return;
+      if (this.fpsHistory.length > 2) this.fpsHistory.shift();
+      if (this.fpsHistory.length < 2) return;
 
       const avg = this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
-      if (avg < 26 && this.tierIndex > 0) {
-        this.tierIndex -= 1;
-        this.tier = QUALITY_TIERS[this.tierIndex];
-        this.fpsHistory = [];
-        this.upgradeHold = 0;
-        this.apply();
-        Console.info('Quality lowered to ' + this.tier + ' (' + Math.round(avg) + ' fps)');
-        return;
+
+      if (avg < TARGET_FPS - 2) {
+        this.downgradeHold += 1;
+        if (this.downgradeHold >= 2) {
+          if (this.tierIndex > 0) {
+            this.tierIndex -= 1;
+            this.tier = QUALITY_TIERS[this.tierIndex];
+            this.dprScale = 1;
+            this.fpsHistory = [];
+            this.upgradeHold = 0;
+            this.downgradeHold = 0;
+            this.apply();
+            Console.info(
+              'Quality lowered to ' + this.tier + ' (' + Math.round(avg) + ' fps, target ' + TARGET_FPS + ')',
+            );
+          } else if (this.dprScale > 0.55) {
+            this.dprScale = Math.max(0.55, this.dprScale - 0.08);
+            this.fpsHistory = [];
+            this.downgradeHold = 0;
+            this.apply();
+            Console.info(
+              'Quality DPR scale ' + this.dprScale.toFixed(2) + ' (' + Math.round(avg) + ' fps)',
+            );
+          } else {
+            this.downgradeHold = 0;
+          }
+          return;
+        }
+      } else {
+        this.downgradeHold = 0;
       }
-      if (avg > 54 && this.tierIndex < this.maxTierIndex) {
+
+      if (avg > TARGET_FPS + 3 && this.tierIndex < this.maxTierIndex) {
         this.upgradeHold += 1;
-        if (this.upgradeHold >= 4) {
+        if (this.upgradeHold >= 5) {
           this.tierIndex += 1;
           this.tier = QUALITY_TIERS[this.tierIndex];
+          this.dprScale = 1;
           this.fpsHistory = [];
           this.upgradeHold = 0;
           this.apply();
@@ -149,9 +197,15 @@ export function initQuality(userOptions = {}) {
   state.qualityMgr = mgr;
 
   if (state.Console?.addCommand) {
-    state.Console.addCommand('quality', 'quality [high|medium|low|auto]', function (arg) {
+    state.Console.addCommand('quality', 'quality [high|medium|low|minimal|auto]', function (arg) {
       if (!arg) {
-        Console.info('Quality: ' + mgr.tier + (mgr.auto ? ' (auto)' : ''));
+        Console.info(
+          'Quality: ' +
+            mgr.tier +
+            (mgr.auto ? ' (auto, target ' + TARGET_FPS + ' fps)' : '') +
+            ', dpr=' +
+            mgr.settings.dprMax.toFixed(2),
+        );
         return;
       }
       const v = String(arg).toLowerCase();
@@ -166,6 +220,6 @@ export function initQuality(userOptions = {}) {
     });
   }
 
-  Console.info('Quality: ' + mgr.tier + (mgr.auto ? ' (auto)' : ''));
+  Console.info('Quality: ' + mgr.tier + (mgr.auto ? ' (auto, target ' + TARGET_FPS + ' fps)' : ''));
   return mgr;
 }
