@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'vitest';
-
 import {
   buildWallSegments,
   mergeWallSegments,
   splitLongWallSegments,
-} from '../src/instagib/client/wallcontours.js';
+} from '@client/wallcontours.js';
+import { describe, it, expect } from 'vitest';
+
 
 // Мини-поле плотности: индексирует клетки через floor (как реальный буфер),
 // getData -> 1 для стен, 0 для пола. floor важен для пробы нормали в дробной точке.

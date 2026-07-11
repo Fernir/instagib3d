@@ -1,40 +1,53 @@
+import { Vector } from '@core/vector.js';
+import { Item } from '@entity/item.js';
+import { WEAPON, ITEM } from '@game/global.js';
 import { describe, it, expect } from 'vitest';
 
-import { WEAPON, ITEM } from '../src/instagib/server/game/global.js';
-import { Vector } from '../src/instagib/server/libs/vector.js';
-import { Item } from '../src/instagib/server/objects/item.js';
 
 const game = { bots: [], droped: [] };
 const pos = new Vector(1, 1);
 
-describe('Item construction', () => {
-  it('derives ammo value from the weapon table for weapon pickups', () => {
+describe('Создание предмета Item', () => {
+  it('берёт количество патронов из таблицы оружия', () => {
     const item = new Item(game, pos, WEAPON.RAIL);
     expect(item.type).toBe(WEAPON.RAIL);
     expect(item.val).toBe(WEAPON.wea_tabl[WEAPON.RAIL].patrons);
     expect(item.alive).toBe(true);
   });
 
-  it('gives non-weapon pickups a zero value by default', () => {
+  it('даёт не-оружейным пикапам нулевое значение по умолчанию', () => {
     const item = new Item(game, pos, ITEM.QUAD);
     expect(item.val).toBe(0);
   });
 
-  it('respects an explicit value override', () => {
+  it('принимает явное переопределение значения', () => {
     const item = new Item(game, pos, WEAPON.PLASMA, 17);
     expect(item.val).toBe(17);
   });
 
-  it('places a dynent at the given position', () => {
+  it('размещает dynent в заданной позиции', () => {
     const item = new Item(game, pos, ITEM.LIFE);
     expect(item.dynent.pos).toMatchObject({ x: 1, y: 1 });
   });
 
-  it('picks a random valid type when none is given', () => {
+  it('выбирает случайный допустимый тип, если тип не задан', () => {
     for (let i = 0; i < 30; i++) {
       const item = new Item(game, pos);
       expect(item.type).toBeGreaterThanOrEqual(1);
       expect(item.type).toBeLessThanOrEqual(ITEM.COUNT);
     }
+  });
+});
+
+describe('Типы предметов Item', () => {
+  it('оружие имеет type <= WEAPON.ROCKET', () => {
+    const item = new Item(game, pos, WEAPON.ROCKET);
+    expect(item.type).toBeLessThanOrEqual(WEAPON.ROCKET);
+  });
+
+  it('усиления имеют type > WEAPON.ROCKET', () => {
+    expect(new Item(game, pos, ITEM.LIFE).type).toBeGreaterThan(WEAPON.ROCKET);
+    expect(new Item(game, pos, ITEM.SHIELD).type).toBeGreaterThan(WEAPON.ROCKET);
+    expect(new Item(game, pos, ITEM.QUAD).type).toBeGreaterThan(WEAPON.ROCKET);
   });
 });

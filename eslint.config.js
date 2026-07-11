@@ -59,14 +59,32 @@ export default [
       'sonarjs/no-duplicated-branches': 'warn',
 
       // --- Импорты ---
-      'import/no-unresolved': 'error',
+      'import/no-unresolved': [
+        'error',
+        { ignore: ['^@core/', '^@engine/', '^@game/', '^@client/', '^@combat/', '^@entity/', '^@level/', '^@network/', '^@server/'] },
+      ],
       'import/no-duplicates': 'warn',
       'import/no-unused-modules': [
         'warn',
         {
           unusedExports: true,
           missingExports: false,
-          ignoreExports: ['src/index.js', 'eslint.config.js', 'vite.config.*'],
+          ignoreExports: [
+            'src/index.js',
+            'src/core/index.js',
+            'src/engine/index.js',
+            'src/client/**',
+            'src/combat/**',
+            'src/entity/**',
+            'src/level/**',
+            'src/network/**',
+            'src/server/**',
+            'src/game/global.js',
+            'src/game/polyfill.js',
+            'src/game/launcher.js',
+            'eslint.config.js',
+            'vite.config.*',
+          ],
         },
       ],
       'import/order': [

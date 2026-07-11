@@ -1,9 +1,9 @@
+import { Random, normalizeAngle } from '@core/utility.js';
 import { describe, it, expect } from 'vitest';
 
-import { Random, normalizeAngle } from '../src/instagib/server/libs/utility.js';
 
-describe('Random', () => {
-  it('is deterministic for a given seed', () => {
+describe('Random — детерминированный ГПСЧ', () => {
+  it('детерминирован при одинаковом seed', () => {
     const a = new Random(12345);
     const b = new Random(12345);
     for (let i = 0; i < 100; i++) {
@@ -11,7 +11,7 @@ describe('Random', () => {
     }
   });
 
-  it('produces different sequences for different seeds', () => {
+  it('даёт разные последовательности для разных seed', () => {
     const a = new Random(1);
     const b = new Random(2);
     const seqA = Array.from({ length: 10 }, () => a.next());
@@ -19,7 +19,7 @@ describe('Random', () => {
     expect(seqA).not.toEqual(seqB);
   });
 
-  it('returns values in [0, 1)', () => {
+  it('возвращает значения в [0, 1)', () => {
     const r = new Random(42);
     for (let i = 0; i < 1000; i++) {
       const v = r.next();
@@ -29,22 +29,22 @@ describe('Random', () => {
   });
 });
 
-describe('normalizeAngle', () => {
-  it('keeps angles already in [0, 2PI)', () => {
+describe('normalizeAngle — нормализация угла', () => {
+  it('не меняет углы уже в [0, 2PI)', () => {
     expect(normalizeAngle(0)).toBeCloseTo(0, 10);
     expect(normalizeAngle(Math.PI)).toBeCloseTo(Math.PI, 10);
   });
 
-  it('wraps negative angles into [0, 2PI)', () => {
+  it('переносит отрицательные углы в [0, 2PI)', () => {
     expect(normalizeAngle(-Math.PI / 2)).toBeCloseTo((3 * Math.PI) / 2, 10);
   });
 
-  it('wraps angles above 2PI', () => {
+  it('переносит углы больше 2PI', () => {
     expect(normalizeAngle(3 * Math.PI)).toBeCloseTo(Math.PI, 10);
     expect(normalizeAngle(2 * Math.PI + 0.5)).toBeCloseTo(0.5, 10);
   });
 
-  it('always returns a value within [0, 2PI)', () => {
+  it('всегда возвращает значение в [0, 2PI)', () => {
     for (let a = -50; a <= 50; a += 0.37) {
       const n = normalizeAngle(a);
       expect(n).toBeGreaterThanOrEqual(0);

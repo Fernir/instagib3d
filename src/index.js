@@ -1,4 +1,4 @@
-import { startGame, stopGame } from './instagib/launcher.js';
+import { startGame, stopGame } from './game/launcher.js';
 
 import './main.scss';
 

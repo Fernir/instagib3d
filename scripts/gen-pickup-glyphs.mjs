@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
 const letterFontPath = path.join(root, 'public/game/fonts/Inter-Bold.ttf');
 const iconFontPath = path.join(root, 'public/game/fonts/fa-solid-900.ttf');
-const outPath = path.join(root, 'src/instagib/client/pickup-glyphs.js');
+const outPath = path.join(root, 'src/client/pickup-glyphs.js');
 
 const LETTERS = ['Q', 'R', 'S'];
 const FONT_SIZE = 160;

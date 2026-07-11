@@ -1,10 +1,10 @@
+import { GameEvent } from '@combat/event.js';
+import { Vector } from '@core/vector.js';
+import { Dynent } from '@entity/dynent.js';
+import { EVENT, ITEM, WEAPON } from '@game/global.js';
+import { __testing as transport } from '@network/transport.js';
 import { describe, expect, it } from 'vitest';
 
-import { EVENT, ITEM, WEAPON } from '../src/instagib/server/game/global.js';
-import { __testing as transport } from '../src/instagib/server/game/transport.js';
-import { Vector } from '../src/instagib/server/libs/vector.js';
-import { Dynent } from '../src/instagib/server/objects/dynent.js';
-import { GameEvent } from '../src/instagib/server/objects/event.js';
 
 function makeView(size = 512) {
   return new DataView(new ArrayBuffer(size));
@@ -54,8 +54,8 @@ function makeBot(overrides = {}) {
   };
 }
 
-describe('transport string codec', () => {
-  it('round-trips latin and cyrillic strings', () => {
+describe('transport — кодек строк', () => {
+  it('round-trip для латиницы и кириллицы', () => {
     const view = makeView();
     const text = 'rPlayer42 Привет!?';
     const offset = transport.setString(view, 0, text);
@@ -64,36 +64,34 @@ describe('transport string codec', () => {
     expect(decoded.str).toBe(text);
   });
 
-  it('replaces unsupported characters with ?', () => {
+  it('заменяет неподдерживаемые символы на ?', () => {
     const view = makeView();
     transport.setString(view, 0, 'ok🙂');
-    // setString walks UTF-16 code units, so one emoji surrogate pair becomes
-    // two replacement chars in the current binary protocol.
     expect(transport.getString(view, 0).str).toBe('ok??');
   });
 
-  it('truncates strings to 255 characters', () => {
+  it('обрезает строки до 255 символов', () => {
     const view = makeView(300);
     transport.setString(view, 0, 'a'.repeat(300));
     expect(transport.getString(view, 0).str).toHaveLength(255);
   });
 });
 
-describe('transport fixed-point helpers', () => {
-  it('round-trips values within 1/256 precision', () => {
+describe('transport — fixed-point', () => {
+  it('round-trip с точностью 1/256', () => {
     const value = 12.345;
     expect(transport.toFloat(transport.toFixed(value))).toBeCloseTo(12.34375, 10);
   });
 
-  it('supports custom coefficients for small signed values', () => {
+  it('поддерживает пользовательский коэффициент для малых знаковых значений', () => {
     const value = -0.123;
     const fixed = transport.toFixed(value, 50 * 256);
     expect(transport.toFloat(fixed, 50 * 256)).toBeCloseTo(value, 3);
   });
 });
 
-describe('transport item codec', () => {
-  it('round-trips item type and quantized position', () => {
+describe('transport — кодек предметов', () => {
+  it('round-trip типа и квантованной позиции', () => {
     const item = {
       type: ITEM.QUAD,
       dynent: new Dynent(new Vector(3.25, 9.75)),
@@ -110,8 +108,8 @@ describe('transport item codec', () => {
   });
 });
 
-describe('transport bot codec', () => {
-  it('round-trips non-camera bot state', () => {
+describe('transport — кодек ботов', () => {
+  it('round-trip состояния обычного бота', () => {
     const bot = makeBot({ power: ITEM.REGEN });
     const view = makeView();
     const offset = transport.setBot(view, 0, bot, false, false);
@@ -132,7 +130,7 @@ describe('transport bot codec', () => {
     expect(decoded.health_ratio).toBeCloseTo(80 / 3999, 2);
   });
 
-  it('round-trips camera-only fields', () => {
+  it('round-trip полей камеры', () => {
     const bot = makeBot();
     const view = makeView();
     const offset = transport.setBot(view, 0, bot, true, true);
@@ -155,8 +153,8 @@ describe('transport bot codec', () => {
   });
 });
 
-describe('transport event codec', () => {
-  it('round-trips pain events with direction and bot id', () => {
+describe('transport — кодек событий', () => {
+  it('round-trip PAIN с направлением и bot id', () => {
     const event = new GameEvent(EVENT.PAIN, [4.5, 8.25], [0.25, -0.125], 42);
     const decoded = encodeDecodeEvent(event);
 
@@ -168,7 +166,7 @@ describe('transport event codec', () => {
     expect(decoded.botid).toBe(42);
   });
 
-  it('round-trips bullet dead events with 3D death position', () => {
+  it('round-trip BULLET_DEAD с 3D-позицией смерти', () => {
     const bullet = {
       id: 321,
       z: 1.375,
@@ -184,7 +182,7 @@ describe('transport event codec', () => {
     expect(decoded.z).toBeCloseTo(1.375, 10);
   });
 
-  it('round-trips bot respawn events with bot id', () => {
+  it('round-trip BOT_RESPAWN с bot id', () => {
     const event = new GameEvent(EVENT.BOT_RESPAWN, [6.5, 9.25], null, 17);
     const decoded = encodeDecodeEvent(event);
 
@@ -194,7 +192,7 @@ describe('transport event codec', () => {
     expect(decoded.botid).toBe(17);
   });
 
-  it('round-trips bullet respawn events with type, power, pitch and z', () => {
+  it('round-trip BULLET_RESPAWN с type, power, pitch и z', () => {
     const bullet = {
       id: 111,
       type: WEAPON.ROCKET,
@@ -216,7 +214,7 @@ describe('transport event codec', () => {
     expect(decoded.z).toBeCloseTo(1.625, 10);
   });
 
-  it('round-trips shaft line shoot extras', () => {
+  it('round-trip LINE_SHOOT для shaft', () => {
     const bullet = {
       type: WEAPON.SHAFT,
       pitch: 0.15,
@@ -244,8 +242,8 @@ describe('transport event codec', () => {
   });
 });
 
-describe('transport scoreboard row codec', () => {
-  it('prefixes nick with killer/looser color marker and round-trips scores', () => {
+describe('transport — строка таблицы лидеров', () => {
+  it('добавляет маркер killer/looser к нику и кодирует очки', () => {
     const rowBot = {
       nick: 'Neo',
       stats: { scores: 1500 },

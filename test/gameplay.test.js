@@ -1,8 +1,8 @@
+import { Event } from '@core/event.js';
+import { WEAPON } from '@game/global.js';
+import { gameplay } from '@server/gameplay.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { gameplay } from '../src/instagib/server/game/gameplay.js';
-import { WEAPON } from '../src/instagib/server/game/global.js';
-import { Event } from '../src/instagib/server/libs/event.js';
 
 // gameplay.js навешивает обработчики на общий Event-синглтон при импорте.
 // Тесты гоняют логику начисления очков/статистики, эмитя те же события,
@@ -34,24 +34,24 @@ function kill(killer, victim, bullet) {
   Event.emit('botdead', victim, killer, bullet);
 }
 
-describe('gameplay._E (Elo expectation)', () => {
-  it('returns half the K-factor for equal scores', () => {
+describe('gameplay._E — ожидание Elo', () => {
+  it('при равных рейтингах даёт половину K-фактора', () => {
     expect(gameplay._E(1200, 1200)).toBeCloseTo(gameplay.ratingkoef / 2, 10);
   });
 
-  it('is symmetric: _E(a,b) + _E(b,a) === ratingkoef', () => {
+  it('симметрично: _E(a,b) + _E(b,a) === ratingkoef', () => {
     expect(gameplay._E(1500, 1000) + gameplay._E(1000, 1500)).toBeCloseTo(gameplay.ratingkoef, 10);
   });
 
-  it('gives the underdog a larger expected gain', () => {
+  it('аутсайдер получает больший ожидаемый прирост', () => {
     const underdog = gameplay._E(1000, 1600);
     const favourite = gameplay._E(1600, 1000);
     expect(underdog).toBeGreaterThan(favourite);
   });
 });
 
-describe('gameplay.sortBots', () => {
-  it('orders by score descending and assigns rank', () => {
+describe('gameplay.sortBots — сортировка таблицы', () => {
+  it('сортирует по очкам по убыванию и назначает rank', () => {
     const a = makeBot(1);
     const b = makeBot(2);
     const c = makeBot(3);
@@ -68,8 +68,8 @@ describe('gameplay.sortBots', () => {
   });
 });
 
-describe('botadded initialization', () => {
-  it('seeds neutral stats and helper predicates', () => {
+describe('botadded — инициализация бота', () => {
+  it('задаёт нейтральную статистику и предикаты', () => {
     const bot = makeBot(42);
     expect(bot.stats.scores).toBe(1200);
     expect(bot.stats.frag).toBe(0);
@@ -78,8 +78,8 @@ describe('botadded initialization', () => {
   });
 });
 
-describe('botdead scoring', () => {
-  it('penalizes self-kills', () => {
+describe('botdead — начисление очков', () => {
+  it('штрафует за суицид', () => {
     const bot = makeBot(1);
     kill(bot, bot, null);
     expect(bot.stats.selfkill).toBe(1);
@@ -88,7 +88,7 @@ describe('botdead scoring', () => {
     expect(bot.stats.death).toBe(1);
   });
 
-  it('transfers Elo points on a normal frag', () => {
+  it('передаёт очки Elo при обычном фраге', () => {
     const killer = makeBot(1);
     const victim = makeBot(2);
     kill(killer, victim, null);
@@ -101,7 +101,7 @@ describe('botdead scoring', () => {
     expect(victim.stats.currentseria).toBe(0);
   });
 
-  it('marks a killer after killseria frags and doubles the reward', () => {
+  it('отмечает killer после killseria фрагов и удваивает награду', () => {
     const killer = makeBot(1);
     for (let i = 0; i < gameplay.killseria; i++) {
       kill(killer, makeBot(100 + i), null);
@@ -112,7 +112,7 @@ describe('botdead scoring', () => {
     expect(killer.isKiller()).toBe(true);
   });
 
-  it('flags a looser after losing looserseria times in a row', () => {
+  it('отмечает looser после looserseria смертей подряд', () => {
     const victim = makeBot(1);
     for (let i = 0; i < gameplay.looserseria; i++) {
       kill(makeBot(200 + i), victim, null);
@@ -124,11 +124,11 @@ describe('botdead scoring', () => {
   });
 });
 
-describe('botdead multikills', () => {
-  it('counts double / triple / multi within the multikill window', () => {
+describe('botdead — мультикиллы', () => {
+  it('считает double / triple / multi в окне multikill', () => {
     const killer = makeBot(1);
 
-    setNow(50_000); // первый фраг далеко от старта — не quick, не multi
+    setNow(50_000);
     kill(killer, makeBot(301), null);
     expect(killer.stats.currentmultikill).toBe(0);
 
@@ -148,7 +148,7 @@ describe('botdead multikills', () => {
     expect(killer.stats.i_am_multi).toBe(3);
   });
 
-  it('resets the multikill chain once the window lapses', () => {
+  it('сбрасывает цепочку multikill после истечения окна', () => {
     const killer = makeBot(1);
     setNow(50_000);
     kill(killer, makeBot(311), null);
@@ -156,14 +156,14 @@ describe('botdead multikills', () => {
     kill(killer, makeBot(312), null);
     expect(killer.stats.currentmultikill).toBe(1);
 
-    setNow(60_000); // > multikilltime после предыдущего
+    setNow(60_000);
     kill(killer, makeBot(313), null);
     expect(killer.stats.currentmultikill).toBe(0);
   });
 });
 
-describe('botdead timing bonuses', () => {
-  it('awards quickkill when fragging soon after respawn', () => {
+describe('botdead — бонусы по времени', () => {
+  it('даёт quickkill при фраге сразу после респавна', () => {
     const killer = makeBot(1);
     setNow(100_000);
     Event.emit('botrespawn', killer);
@@ -172,7 +172,7 @@ describe('botdead timing bonuses', () => {
     expect(killer.stats.i_am_quickkill).toBe(true);
   });
 
-  it('marks quickdeath when dying soon after respawn', () => {
+  it('даёт quickdeath при смерти сразу после респавна', () => {
     const victim = makeBot(1);
     setNow(100_000);
     Event.emit('botrespawn', victim);
@@ -182,17 +182,17 @@ describe('botdead timing bonuses', () => {
   });
 });
 
-describe('rail sniper tracking', () => {
+describe('rail — отслеживание снайпера', () => {
   const railBullet = { type: WEAPON.RAIL };
 
-  it('does not flag a sniper on a single rail kill', () => {
+  it('не отмечает sniper после одного rail-убийства', () => {
     const killer = makeBot(1);
     Event.emit('shoot', killer, WEAPON.RAIL);
     kill(killer, makeBot(501), railBullet);
     expect(killer.stats.i_am_sniper).toBe(false);
   });
 
-  it('flags a sniper on consecutive un-missed rail kills', () => {
+  it('отмечает sniper при серии rail-убийств без промаха', () => {
     const killer = makeBot(1);
     Event.emit('shoot', killer, WEAPON.RAIL);
     kill(killer, makeBot(511), railBullet);
@@ -202,7 +202,7 @@ describe('rail sniper tracking', () => {
     expect(killer.stats.i_am_sniper).toBe(true);
   });
 
-  it('shoot with a non-rail weapon resets the rail counters', () => {
+  it('выстрел не-rail сбрасывает счётчики rail', () => {
     const killer = makeBot(1);
     Event.emit('shoot', killer, WEAPON.RAIL);
     expect(killer.stats.railshootnumber).toBe(1);
@@ -212,8 +212,8 @@ describe('rail sniper tracking', () => {
   });
 });
 
-describe('telefrag scoring', () => {
-  it('rewards the telefragger and tags both parties', () => {
+describe('telefrag — телефраг', () => {
+  it('награждает телефраггера и помечает обоих', () => {
     const killer = makeBot(1);
     const victim = makeBot(2);
     Event.emit('telefrag', killer, victim);
