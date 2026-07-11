@@ -5,6 +5,13 @@ function isPowerOfTwo(n) {
   return n > 0 && (n & (n - 1)) === 0;
 }
 
+function candidateUrls(url) {
+  const urls = [url];
+  if (/\.jpe?g$/i.test(url)) urls.unshift(url.replace(/\.jpe?g$/i, '.png'));
+  else if (/\.png$/i.test(url)) urls.push(url.replace(/\.png$/i, '.jpg'));
+  return [...new Set(urls)];
+}
+
 function uploadPlaceholder(gl, id, rgba) {
   gl.bindTexture(gl.TEXTURE_2D, id);
   gl.texImage2D(
@@ -22,6 +29,28 @@ function uploadPlaceholder(gl, id, rgba) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+function applyTexParams(gl, w, h, filter, wrap, useMipmaps) {
+  const pot = isPowerOfTwo(w) && isPowerOfTwo(h);
+  let wrapS = wrap;
+  let wrapT = wrap;
+  if (!pot && (wrap === gl.REPEAT || wrap === gl.MIRRORED_REPEAT)) {
+    wrapS = gl.CLAMP_TO_EDGE;
+    wrapT = gl.CLAMP_TO_EDGE;
+  }
+
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapS);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapT);
+
+  if (useMipmaps && pot && filter === gl.LINEAR) {
+    gl.generateMipmap(gl.TEXTURE_2D);
+    if (gl.getError() === gl.NO_ERROR) {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    }
+  }
 }
 
 function readImagePixels(source, flipY) {
@@ -57,59 +86,26 @@ function uploadImageSource(gl, id, source, flipY, filter, wrap, useMipmaps) {
     th = Math.max(1, Math.floor(th * scale));
   }
 
+  const canvas = document.createElement('canvas');
+  canvas.width = tw;
+  canvas.height = th;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  if (flipY) {
+    ctx.translate(0, th);
+    ctx.scale(1, -1);
+  }
+  ctx.drawImage(source, 0, 0, tw, th);
+
   gl.bindTexture(gl.TEXTURE_2D, id);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  if (gl.getError() !== gl.NO_ERROR) return false;
 
-  let pixels = null;
-  if (tw === w && th === h) {
-    pixels = readImagePixels(source, flipY);
-  } else {
-    const canvas = document.createElement('canvas');
-    canvas.width = tw;
-    canvas.height = th;
-    const ctx = canvas.getContext('2d');
-    if (flipY) {
-      ctx.translate(0, th);
-      ctx.scale(1, -1);
-    }
-    ctx.drawImage(source, 0, 0, tw, th);
-    const img = ctx.getImageData(0, 0, tw, th);
-    pixels = { width: tw, height: th, data: new Uint8Array(img.data) };
-  }
-
-  if (!pixels) return false;
-
-  gl.texImage2D(
-    gl.TEXTURE_2D,
-    0,
-    gl.RGBA,
-    pixels.width,
-    pixels.height,
-    0,
-    gl.RGBA,
-    gl.UNSIGNED_BYTE,
-    pixels.data,
-  );
-
-  const pot = isPowerOfTwo(pixels.width) && isPowerOfTwo(pixels.height);
-  let wrapS = wrap;
-  let wrapT = wrap;
-  if (!pot && (wrap === gl.REPEAT || wrap === gl.MIRRORED_REPEAT)) {
-    wrapS = gl.CLAMP_TO_EDGE;
-    wrapT = gl.CLAMP_TO_EDGE;
-  }
-
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapS);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapT);
-
-  if (useMipmaps && pot && filter === gl.LINEAR) {
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  }
-
-  return gl.getError() === gl.NO_ERROR;
+  applyTexParams(gl, tw, th, filter, wrap, useMipmaps);
+  return true;
 }
 
 async function decodeImage(image) {
@@ -117,25 +113,30 @@ async function decodeImage(image) {
     try {
       await image.decode();
     } catch (_e) {
-      /* progressive JPEG may fail decode(); pixel read still works */
+      /* ignore */
     }
   }
 }
 
-async function loadImageSource(url) {
+async function loadImageSourceOnce(url) {
   if (typeof fetch === 'function' && typeof createImageBitmap === 'function') {
-    try {
-      const res = await fetch(url, { cache: 'force-cache' });
-      if (res.ok) {
-        const blob = await res.blob();
-        const bitmap = await createImageBitmap(blob, {
-          premultiplyAlpha: 'none',
-          colorSpaceConversion: 'none',
-        });
-        return bitmap;
+    const res = await fetch(url, { cache: 'force-cache' });
+    if (res.ok) {
+      const blob = await res.blob();
+      let bitmap = null;
+      try {
+        bitmap = await createImageBitmap(blob);
+      } catch (_e1) {
+        try {
+          bitmap = await createImageBitmap(blob, {
+            premultiplyAlpha: 'none',
+            colorSpaceConversion: 'none',
+          });
+        } catch (_e2) {
+          bitmap = null;
+        }
       }
-    } catch (_e) {
-      /* fall through to Image() */
+      if (bitmap && bitmap.width > 0 && bitmap.height > 0) return bitmap;
     }
   }
 
@@ -144,13 +145,27 @@ async function loadImageSource(url) {
     image.crossOrigin = 'anonymous';
     image.onload = async function () {
       await decodeImage(image);
-      resolve(image);
+      if (image.width > 0 && image.height > 0) resolve(image);
+      else reject(new Error("empty image '" + url + "'"));
     };
     image.onerror = function () {
       reject(new Error("while loading image '" + url + "'."));
     };
     image.src = url;
   });
+}
+
+async function loadImageSource(url) {
+  const urls = candidateUrls(url);
+  let lastErr = null;
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      return await loadImageSourceOnce(urls[i]);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("while loading image '" + url + "'.");
 }
 
 class Texture {
@@ -167,7 +182,7 @@ class Texture {
       if (param.filter) filter = param.filter;
       if (param.wrap) wrap = param.wrap;
       if (param.flipY === false) flipY = false;
-      if (param.mipmap === true) useMipmaps = true;
+      if (param.mipmap === true || param.tile === true) useMipmaps = true;
     }
 
     let loaded = false;
@@ -217,21 +232,7 @@ class Texture {
         img,
         0,
       );
-      const pot = isPowerOfTwo(size);
-      let wrapS = wrap;
-      let wrapT = wrap;
-      if (!pot && (wrap === gl.REPEAT || wrap === gl.MIRRORED_REPEAT)) {
-        wrapS = gl.CLAMP_TO_EDGE;
-        wrapT = gl.CLAMP_TO_EDGE;
-      }
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapS);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapT);
-      if (useMipmaps && pot && filter === gl.LINEAR) {
-        gl.generateMipmap(gl.TEXTURE_2D);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-      }
+      applyTexParams(gl, size, size, filter, wrap, useMipmaps);
       loaded = true;
     }
 
@@ -247,4 +248,4 @@ class Texture {
   }
 }
 
-export { Texture };
+export { Texture, candidateUrls, loadImageSource };

@@ -531,7 +531,9 @@ class GameClient {
       if (levelRender.clearDynamicLights) levelRender.clearDynamicLights();
       if (state.BulletClient && state.BulletClient.collectLights)
         state.BulletClient.collectLights(levelRender);
-      if (state.Q2FX && state.Q2FX.collectLights) state.Q2FX.collectLights(levelRender);
+      if (state.quality?.q2fx !== false && state.Q2FX && state.Q2FX.collectLights) {
+        state.Q2FX.collectLights(levelRender);
+      }
 
       // Карта теней от солнца: статика рисуется внутри, динамику (боты/предметы)
       // дорисовываем здесь в light-space перед основным проходом мира.
@@ -549,7 +551,7 @@ class GameClient {
       state.wireframePass = state.wireframe;
       levelRender.render(mybot.dynent);
 
-      if (state.Q2FX) state.Q2FX.update();
+      if (state.quality?.q2fx !== false && state.Q2FX) state.Q2FX.update();
 
       if (isWireframe()) {
         const gl = state.gl;
@@ -591,7 +593,9 @@ class GameClient {
         state.gl.enable(state.gl.BLEND);
         state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
 
-        state.Particle.render(mybot.dynent, 0);
+        if (state.quality?.particles !== false) {
+          state.Particle.render(mybot.dynent, 0);
+        }
         frameitems.forEach(function (item) {
           state.Item.render(mybot.dynent, item);
         });
@@ -601,9 +605,11 @@ class GameClient {
         });
         SpawnFx.render(mybot.dynent, 'pillar');
         state.BulletClient.render(mybot.dynent);
-        state.Particle.render(mybot.dynent, 1);
-        state.Particle.render(mybot.dynent, 2);
-        if (state.Q2FX) state.Q2FX.render(mybot.dynent);
+        if (state.quality?.particles !== false) {
+          state.Particle.render(mybot.dynent, 1);
+          state.Particle.render(mybot.dynent, 2);
+        }
+        if (state.quality?.q2fx !== false && state.Q2FX) state.Q2FX.render(mybot.dynent);
 
         if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
       }

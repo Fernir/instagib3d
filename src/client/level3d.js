@@ -125,14 +125,15 @@ class LevelRender3D {
       fbo_visible.unbind();
     }
 
-    const tex_ground1 = new Texture('/game/textures/fx/tex_grass.jpg', { wrap: gl.REPEAT });
-    const tex_wall = new Texture('/game/textures/fx/wall.jpg', { wrap: gl.REPEAT });
-    const tex_lava = new Texture('/game/textures/fx/lava.jpg', { wrap: gl.REPEAT });
-    const tex_bridge = new Texture('/game/textures/fx/wall.jpg', { wrap: gl.REPEAT });
+    const tileTex = { wrap: gl.REPEAT, tile: true };
+    const tex_ground1 = new Texture('/game/textures/fx/tex_grass.png', tileTex);
+    const tex_wall = new Texture('/game/textures/fx/wall.png', tileTex);
+    const tex_lava = new Texture('/game/textures/fx/lava.png', tileTex);
+    const tex_bridge = new Texture('/game/textures/fx/wall.png', tileTex);
     const tex_noise = new Texture('/game/textures/fx/noise.png');
     let tex_ground2 = null;
 
-    Buffer.loadImage('/game/textures/fx/tex_ground.jpg', function (R, G, B) {
+    Buffer.loadImage('/game/textures/fx/tex_ground.png', function (R, G, B) {
       const ground_mask = new Buffer(R.getSize());
       ground_mask.perlin(32, 0.5).normalize(0, 1);
       tex_ground2 = Buffer.create_texture(R, G, B, ground_mask);
@@ -206,13 +207,16 @@ class LevelRender3D {
     const lavaFlow = new LavaFlow(size, tex_noise);
 
     const vert_world = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
     attribute vec3 position;
     attribute vec2 texuv;
     attribute vec3 normal;
     uniform mat4 view_proj;
     varying vec3 v_world_pos;
     varying vec2 v_world;
-    varying vec2 v_uv;
+    varying highp vec2 v_uv;
     varying vec3 v_normal;
     varying float v_height;
 
@@ -227,6 +231,9 @@ class LevelRender3D {
     }`;
 
     const vert_wall = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
     attribute vec3 position;
     attribute vec2 texuv;
     attribute vec3 normal;
@@ -234,7 +241,7 @@ class LevelRender3D {
     uniform mat4 view_proj;
     varying vec3 v_world_pos;
     varying vec2 v_world;
-    varying vec2 v_uv;
+    varying highp vec2 v_uv;
     varying vec3 v_normal;
     varying float v_height;
     varying vec2 v_atlas;
@@ -347,7 +354,7 @@ class LevelRender3D {
     uniform vec4 lava_params; // x = scale, y = time (0..1)
     varying vec3 v_world_pos;
     varying vec2 v_world;
-    varying vec2 v_uv;
+    varying highp vec2 v_uv;
     varying vec3 v_normal;
     ${LevelLighting.dynamicGlsl}
     ${LevelLighting.staticLightmapGlsl}
@@ -420,7 +427,7 @@ class LevelRender3D {
     uniform vec4 lightmap_params;
     varying vec3 v_world_pos;
     varying vec2 v_world;
-    varying vec2 v_uv;
+    varying highp vec2 v_uv;
     varying vec3 v_normal;
     varying float v_height;
     varying vec2 v_atlas;
@@ -432,7 +439,7 @@ class LevelRender3D {
     void main()
     {
         vec3 n = normalize(v_normal);
-        vec4 wall = texture2D(tex_wall, v_uv);
+        vec4 wall = texture2D(tex_wall, fract(v_uv));
         vec3 albedo = wall.rgb;
         vec2 uv_level = vec2(v_world.x * scale_world.x, 1.0 - v_world.y * scale_world.x);
 
@@ -469,14 +476,14 @@ class LevelRender3D {
     uniform vec4 scale_world;
     uniform vec4 cam_pos;
     varying vec3 v_world_pos;
-    varying vec2 v_uv;
+    varying highp vec2 v_uv;
     ${LevelLighting.dynamicGlsl}
     ${LevelLighting.staticLightmapGlsl}
     ${FOG_MIX_GLSL}
 
     void main()
     {
-        vec4 wall = texture2D(tex_wall, v_uv);
+        vec4 wall = texture2D(tex_wall, fract(v_uv));
         vec3 albedo = wall.rgb * 0.45;
         vec2 uv_level = vec2(v_world_pos.x * scale_world.x, 1.0 - v_world_pos.z * scale_world.x);
         vec3 lighting = vec3(${AMBIENT_BASE.toFixed(2)});
@@ -500,7 +507,7 @@ class LevelRender3D {
     uniform vec4 cam_pos;
     varying vec3 v_world_pos;
     varying vec2 v_world;
-    varying vec2 v_uv;
+    varying highp vec2 v_uv;
     varying vec3 v_normal;
     varying float v_height;
     ${LevelLighting.dynamicGlsl}
@@ -511,9 +518,10 @@ class LevelRender3D {
     void main()
     {
         vec3 n = normalize(v_normal);
-        vec4 wood = texture2D(tex_wall, v_uv);
+        vec2 wuv = fract(v_uv);
+        vec4 wood = texture2D(tex_wall, wuv);
         vec3 tint = vec3(0.82, 0.55, 0.30);
-        float plank = abs(fract(v_uv.x * 4.0) - 0.5);
+        float plank = abs(fract(wuv.x * 4.0) - 0.5);
         float plank_line = smoothstep(0.46, 0.5, plank);
 
         vec3 albedo = wood.rgb * tint;
@@ -1327,10 +1335,12 @@ class LevelRender3D {
       return decals.adapter();
     };
     let visInterval = state.quality?.visMapInterval ?? 4;
+    let decalsEnabled = state.quality?.decals !== false;
     let visFrame = 0;
     this.applyQuality = function (settings) {
       if (!settings) return;
       visInterval = settings.visMapInterval || 4;
+      decalsEnabled = settings.decals !== false;
       if (settings.shadowRes) shadowMap.setResolution(settings.shadowRes);
       else if (settings.shadows === false) shadowMap.setResolution(0);
       fog.setEnabled(settings.fog !== false);
@@ -1404,7 +1414,7 @@ class LevelRender3D {
       if (!this.ready()) return;
 
       // Затухание декалей: каждый кадр FBO мультиплицируется на коэффициент.
-      decals.fade();
+      if (decalsEnabled) decals.fade();
 
       // Анимированный поток лавы — отдельный pre-pass в FBO, тот же шейдер, что в 2D.
       lavaFlow.render();
@@ -1434,7 +1444,7 @@ class LevelRender3D {
       const t = (Date.now() % 100000) * 0.001;
       const cam_eye_v = [fogCam.eye[0], fogCam.eye[1], fogCam.eye[2], 0];
 
-      const decal_tex = decals.floorTexture();
+      const decal_tex = decalsEnabled ? decals.floorTexture() : tex_visible_black;
       const lightmap_tex = lighting.texture();
       const visible_tex = fbo_visible.getTexture();
 
@@ -1467,7 +1477,11 @@ class LevelRender3D {
       shader_wall.texture(shader_wall.tex_wall, tex_wall.getId(), 0);
       shader_wall.texture(shader_wall.tex_lightmap, lightmap_tex, 1);
       shader_wall.texture(shader_wall.tex_visible, visible_tex, 2);
-      shader_wall.texture(shader_wall.tex_wall_decal, decals.wallTexture() || tex_visible_black, 3);
+      shader_wall.texture(
+        shader_wall.tex_wall_decal,
+        decalsEnabled ? decals.wallTexture() || tex_visible_black : tex_visible_black,
+        3,
+      );
       applyShadow(shader_wall, 4);
       lighting.apply(lights_loc_wall);
       wall_mesh.bind(meshLocs);

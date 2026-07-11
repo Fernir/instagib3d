@@ -319,6 +319,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   let gFrameCount = 0;
   let gSeconds = Date.now();
+  let previewQualityStarted = false;
   function calcFps() {
     const now = Date.now();
     gFrameCount += 1;
@@ -375,6 +376,10 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   function renderLoop() {
     if (destroyed) return;
+    if (!previewQualityStarted) {
+      previewQualityStarted = true;
+      state.qualityMgr?.markPreviewReady?.();
+    }
     if (document.hidden) {
       animationId = requestAnimationFrame(renderLoop);
       return;

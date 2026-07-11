@@ -40,7 +40,7 @@ export function canRequestElementFullscreen(doc = typeof document !== 'undefined
 }
 
 export async function enterFullscreen(element) {
-  const el = element || state.canvas || document.documentElement;
+  const el = element || document.documentElement;
   if (!el) return false;
   if (isStandaloneDisplay() || isFullscreenActive()) return true;
 
@@ -51,10 +51,6 @@ export async function enterFullscreen(element) {
     }
     if (el.webkitRequestFullscreen) {
       el.webkitRequestFullscreen();
-      return true;
-    }
-    if (el.webkitEnterFullscreen) {
-      el.webkitEnterFullscreen();
       return true;
     }
   } catch (_err) {
@@ -102,7 +98,7 @@ export async function releaseWakeLock() {
 
 export async function enterMobileImmersiveMode() {
   if (!isMobileControls()) return { fullscreen: false, wakeLock: false };
-  const fullscreen = await enterFullscreen(state.canvas || document.documentElement);
+  const fullscreen = await enterFullscreen(document.documentElement);
   const wakeLock = await requestWakeLock();
   hideInstallHint();
   return { fullscreen, wakeLock };
@@ -181,7 +177,7 @@ function onVisibilityChange() {
   if (state.playing && isMobileControls()) {
     requestWakeLock();
     if (!isStandaloneDisplay() && !isFullscreenActive()) {
-      enterFullscreen(state.canvas || document.documentElement);
+      enterFullscreen(document.documentElement);
     }
   }
 }
@@ -202,7 +198,7 @@ export function initMobileDisplay(canvas) {
   if (state.Console?.addCommand) {
     state.Console.addCommand('fullscreen', 'toggle browser fullscreen (mobile)', async function () {
       if (isFullscreenActive()) await exitFullscreen();
-      else await enterFullscreen(canvas || state.canvas || document.documentElement);
+      else await enterFullscreen(document.documentElement);
     });
   }
 }

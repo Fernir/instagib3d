@@ -4,6 +4,7 @@ import { state } from '@/core/runtime-state.js';
 
 import { isMobileControls } from '@/engine/mobilecontrols.js';
 import { uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc } from '@/engine/render_text.js';
+import { resizeGameCanvas } from '@/engine/viewport.js';
 import { Shader } from './shader.js';
 
 const SLIDE_SPEED = 14;
@@ -208,6 +209,7 @@ Console.ensureMobileInput = function () {
   if (Console._mobileInput || typeof document === 'undefined') return Console._mobileInput;
   const el = document.createElement('input');
   el.type = 'text';
+  el.className = 'console-mobile-input';
   el.autocomplete = 'off';
   el.autocapitalize = 'off';
   el.autocorrect = 'off';
@@ -215,24 +217,6 @@ Console.ensureMobileInput = function () {
   el.setAttribute('enterkeyhint', 'send');
   el.setAttribute('inputmode', 'text');
   el.setAttribute('aria-label', 'Console command');
-  el.style.position = 'fixed';
-  el.style.left = '0';
-  el.style.right = '0';
-  el.style.bottom = '0';
-  el.style.width = '100%';
-  el.style.height = '48px';
-  el.style.fontSize = '16px';
-  el.style.lineHeight = '48px';
-  el.style.opacity = '0.01';
-  el.style.color = 'transparent';
-  el.style.background = 'transparent';
-  el.style.border = 'none';
-  el.style.outline = 'none';
-  el.style.padding = '0 8px';
-  el.style.margin = '0';
-  el.style.zIndex = '10000';
-  el.style.caretColor = 'transparent';
-  el.style.pointerEvents = 'none';
   el.style.display = 'none';
   document.body.appendChild(el);
 
@@ -279,13 +263,32 @@ Console.ensureMobileInput = function () {
   return el;
 };
 
+Console.syncMobileInputLayout = function () {
+  const el = Console._mobileInput;
+  if (!el || !Console.show) return;
+  const vv = window.visualViewport;
+  const h = 48;
+  if (vv) {
+    el.style.top = `${Math.round(vv.offsetTop + vv.height - h)}px`;
+    el.style.bottom = 'auto';
+    el.style.left = `${Math.round(vv.offsetLeft)}px`;
+    el.style.width = `${Math.round(vv.width)}px`;
+  } else {
+    el.style.top = 'auto';
+    el.style.bottom = '0';
+    el.style.left = '0';
+    el.style.width = '100%';
+  }
+};
+
 Console.syncMobileInputVisibility = function () {
   const el = Console._mobileInput;
   if (!el) return;
   const active = Console.show && isMobileControls();
   el.style.display = active ? 'block' : 'none';
   el.style.pointerEvents = active ? 'auto' : 'none';
-  if (!active) el.blur();
+  if (active) Console.syncMobileInputLayout();
+  else el.blur();
 };
 
 Console.focusMobileInput = function () {
@@ -294,9 +297,15 @@ Console.focusMobileInput = function () {
   if (!el) return;
   Console.syncMobileInputVisibility();
   el.value = Console.current_command || '';
-  el.focus({ preventScroll: true });
-  const len = el.value.length;
-  if (el.setSelectionRange) el.setSelectionRange(len, len);
+  const focusInput = () => {
+    Console.syncMobileInputLayout();
+    el.focus();
+    const len = el.value.length;
+    if (el.setSelectionRange) el.setSelectionRange(len, len);
+  };
+  if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
+  requestAnimationFrame(focusInput);
+  setTimeout(focusInput, 100);
 };
 
 Console.blurMobileInput = function () {
@@ -309,8 +318,10 @@ Console.toggle = function () {
   Console.syncMobileInputVisibility();
   if (Console.show) {
     if (document.pointerLockElement) document.exitPointerLock?.();
+    if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
     Console.focusMobileInput();
   } else {
+    if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
     Console.blurMobileInput();
   }
 };

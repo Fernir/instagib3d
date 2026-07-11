@@ -1,50 +1,43 @@
 import { Buffer } from '@/core/buffer.js';
 import { Console, assert } from '@/core/polyfill.js';
 
+import { loadImageSource } from './texture.js';
 import { Texture } from './texture.js';
 
 Buffer.loadImage = function (img, callback) {
-  let image = new Image();
-  image.onload = async function () {
-    if (typeof image.decode === 'function') {
-      try {
-        await image.decode();
-      } catch (_e) {
-        /* see Texture.js */
+  loadImageSource(img)
+    .then(function (image) {
+      assert(image.width === image.height);
+      const size = image.width;
+
+      const R = new Buffer(size);
+      const G = new Buffer(size);
+      const B = new Buffer(size);
+
+      const cnv = document.createElement('canvas');
+      cnv.width = size;
+      cnv.height = size;
+      const disp = cnv.getContext('2d');
+
+      disp.drawImage(image, 0, 0);
+      const data = disp.getImageData(0, 0, size, size).data;
+
+      for (let i = 0; i < size * size; i++) {
+        const r = data[4 * i + 0] / 255;
+        const g = data[4 * i + 1] / 255;
+        const b = data[4 * i + 2] / 255;
+        R.setData(i, r);
+        G.setData(i, g);
+        B.setData(i, b);
       }
-    }
-    assert(image.width === image.height);
-    let size = image.width;
 
-    let R = new Buffer(size);
-    let G = new Buffer(size);
-    let B = new Buffer(size);
-
-    let cnv = document.createElement('canvas');
-    cnv.width = size;
-    cnv.height = size;
-    let disp = cnv.getContext('2d');
-
-    disp.drawImage(image, 0, 0);
-    let data = disp.getImageData(0, 0, size, size).data;
-
-    for (let i = 0; i < size * size; i++) {
-      let r = data[4 * i + 0] / 255;
-      let g = data[4 * i + 1] / 255;
-      let b = data[4 * i + 2] / 255;
-      R.setData(i, r);
-      G.setData(i, g);
-      B.setData(i, b);
-    }
-
-    callback(R, G, B);
-
-    Console.info('Loaded image: ' + img + ' [' + image.width + ', ' + image.height + ']');
-  };
-  image.onerror = function () {
-    assert(false, "while loading image '" + img + "'.");
-  };
-  image.src = img;
+      callback(R, G, B);
+      Console.info('Loaded image: ' + img + ' [' + image.width + ', ' + image.height + ']');
+      if (image.close) image.close();
+    })
+    .catch(function () {
+      assert(false, "while loading image '" + img + "'.");
+    });
 };
 
 Buffer.create_texture = function (R, G, B, A, param) {

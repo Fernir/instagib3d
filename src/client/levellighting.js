@@ -168,7 +168,11 @@ export class LevelLighting {
       const bd = (b[0] - cx) * (b[0] - cx) + (b[2] - cz) * (b[2] - cz);
       return ad - bd;
     });
-    const n = Math.min(sortedDyn.length, LevelLighting.MAX_LIGHTS);
+    const n = Math.min(
+      sortedDyn.length,
+      state.quality?.maxDynLights ?? LevelLighting.MAX_LIGHTS,
+      LevelLighting.MAX_LIGHTS,
+    );
     for (let i = 0; i < n; i++) {
       const d = sortedDyn[i];
       this.writeLight(i, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
