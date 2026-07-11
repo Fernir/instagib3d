@@ -43,7 +43,12 @@ class Sound {
   }
 
   play(pos) {
-    if (!state.soundEnabled || !state.audioUnlocked || state.Howler.ctx?.state === 'suspended')
+    if (
+      !state.soundEnabled ||
+      !state.audioUnlocked ||
+      !state.playing ||
+      state.Howler.ctx?.state === 'suspended'
+    )
       return null;
     if (pos && Sound.outOfRange(pos)) return null;
 

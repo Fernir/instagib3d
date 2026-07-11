@@ -101,7 +101,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   Howler.autoUnlock = true;
 
   function updateAudioMute() {
-    Howler.mute(!state.soundEnabled || !audioUnlocked || document.hidden);
+    Howler.mute(!state.soundEnabled || !audioUnlocked || document.hidden || !state.playing);
   }
   state.updateAudioMute = updateAudioMute;
 

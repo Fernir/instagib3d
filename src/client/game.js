@@ -258,6 +258,7 @@ class GameClient {
       if (isMobileControls()) enterMobileImmersiveMode();
       playing = true;
       state.playing = true;
+      state.updateAudioMute?.();
       state.godMode = false;
       state.godNick = null;
       transport.addUser(nick, function () {
