@@ -1,4 +1,4 @@
-import { state } from '@core/runtime-state.js';
+import { state } from '@/core/runtime-state.js';
 
 import { LevelRender3D } from './level3d.js';
 

@@ -1,6 +1,9 @@
-import { Event } from '@core/event.js';
-import { WEAPON } from '@game/global.js';
-import { gameplay } from '@server/gameplay.js';
+import { Event } from '@/core/event.js';
+
+import { WEAPON } from '@/global.js';
+
+import { gameplay } from '@/sim/gameplay.js';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 

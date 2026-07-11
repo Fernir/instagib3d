@@ -18,6 +18,23 @@ pnpm dev
 
 Opens http://localhost:3000. Other scripts: `build`, `preview`, `lint`, `format`, `test`.
 
+## Source layout
+
+```
+src/
+  core/       math, events, buffers — no DOM/WebGL
+  engine/     WebGL primitives (shader, mesh, texture, …)
+  sim/        game simulation (bots, weapons, level gen) — testable without canvas
+  net/        transport, rooms, P2P
+  client/     rendering, HUD, sound, FX
+  global.js   shared constants (WEAPON, ITEM, EVENT)
+  bootstrap.js  module load order (side-effect imports only)
+  launcher.js   entry: canvas → runtime → game start
+```
+
+Import convention: `./foo.js` within a folder, `@/other/foo.js` across folders.
+Only `bootstrap.js` uses side-effect imports to wire modules together.
+
 ## Multiplayer
 
 Multiplayer is peer-to-peer over WebRTC (PeerJS for signaling), so there's no backend.

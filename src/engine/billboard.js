@@ -1,4 +1,4 @@
-import { state } from '@core/runtime-state.js';
+import { state } from '@/core/runtime-state.js';
 
 // Камеро-ориентированные квады (биллборды).
 //
@@ -16,13 +16,14 @@ export class Billboard {
   // Цилиндрический биллборд (ось Y вертикальна), развёрнутый по yaw камеры:
   // out = viewProj3D · T(x,y,z) · R(yaw) · S(halfW, halfH, 1).
   // flip < 0 зеркалит спрайт по горизонтали.
-  static cylindrical(out, yaw, x, y, z, halfW, halfH, flip = 1) {
+  static cylindrical(out, yaw, x, y, z, halfW, halfH, flip = 1, spin = 0) {
     const mat4 = state.mat4;
     const rx = Math.cos(yaw);
     const rz = -Math.sin(yaw);
 
     mat4.identity(_model);
     mat4.translate(_model, _model, [x, y, z]);
+    if (spin) mat4.rotateY(_model, _model, spin);
 
     _bb[0] = rx * flip;
     _bb[1] = 0;

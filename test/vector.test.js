@@ -1,4 +1,5 @@
-import { Vector } from '@core/vector.js';
+import { Vector } from '@/core/vector.js';
+
 import { describe, it, expect } from 'vitest';
 
 

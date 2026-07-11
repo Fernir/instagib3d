@@ -1,8 +1,33 @@
-import { state } from '@core/runtime-state.js';
-import { assert } from '@game/polyfill.js';
+import { assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
 
 import { Shader } from './shader.js';
 import { Texture } from './texture.js';
+
+const UI_REF_ASPECT = 16 / 9;
+
+// Привязка половины NDC-бокса к целым пикселям (как рамки HUD и кнопка Play).
+function uiSnapHalfNdc(halfNdc, texPx) {
+  const screenH = state.canvas.height;
+  const fullPx = halfNdc * screenH;
+  if (texPx) {
+    const scale = Math.max(1, Math.round(fullPx / texPx));
+    return (scale * texPx) / screenH;
+  }
+  const snappedPx = Math.max(2, Math.round(fullPx));
+  return snappedPx / screenH;
+}
+
+// Размер шрифта, согласованный с uiSnapHalfNdc: компенсирует умножение на aspect в render().
+function uiTextSizeForHalfNdc(halfNdc, baseSize, baseHalf) {
+  const aspect = state.canvas.width / state.canvas.height;
+  const scaled = baseSize * (halfNdc / baseHalf) * (UI_REF_ASPECT / aspect);
+  return Math.max(1.0, scaled);
+}
+
+function uiLineStep(lineHalfNdc) {
+  return uiSnapHalfNdc(lineHalfNdc) * 2;
+}
 
 class Text {
   constructor() {
@@ -388,4 +413,4 @@ class Text {
   }
 }
 
-export { Text };
+export { Text, uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc };

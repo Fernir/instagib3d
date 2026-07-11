@@ -1,6 +1,7 @@
-import { state } from '@core/runtime-state.js';
-import { Framebuffer } from '@engine/FBO.js';
-import { Shader } from '@engine/shader.js';
+import { state } from '@/core/runtime-state.js';
+
+import { Framebuffer } from '@/engine/FBO.js';
+import { Shader } from '@/engine/shader.js';
 
 
 // Анимированная лава: финальный цвет считается в floor shader per-pixel, а этот

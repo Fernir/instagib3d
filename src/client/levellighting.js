@@ -1,6 +1,7 @@
-import { state } from '@core/runtime-state.js';
-import { Framebuffer } from '@engine/FBO.js';
-import { Shader } from '@engine/shader.js';
+import { state } from '@/core/runtime-state.js';
+
+import { Framebuffer } from '@/engine/FBO.js';
+import { Shader } from '@/engine/shader.js';
 
 
 const VERT_LIGHTMAP_PAINT = `
@@ -141,7 +142,7 @@ export class LevelLighting {
     this.dynamicLights.length = 0;
   }
 
-  // priority=2 — живой снаряд; priority=1 — короткая вспышка; priority=0 — прочее.
+  // priority=3 — взрывы; priority=2 — живой снаряд; priority=1 — короткая вспышка.
   addDynamicLight(x, y, z, color, intensity, radius, priority) {
     this.dynamicLights.push([
       x,

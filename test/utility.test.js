@@ -1,4 +1,5 @@
-import { Random, normalizeAngle } from '@core/utility.js';
+import { Random, normalizeAngle } from '@/core/utility.js';
+
 import { describe, it, expect } from 'vitest';
 
 

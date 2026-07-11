@@ -1,5 +1,5 @@
-import { Buffer } from '@core/buffer.js';
-import { Console, assert } from '@game/polyfill.js';
+import { Buffer } from '@/core/buffer.js';
+import { Console, assert } from '@/core/polyfill.js';
 
 import { Texture } from './texture.js';
 

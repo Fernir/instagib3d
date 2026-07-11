@@ -232,7 +232,7 @@ export function mergeWallSegments(segments) {
 }
 
 // Длинные прогоны после merge могут не влезть в один тайл атласа — режем
-// на куски до упаковки. Геометрия остаётся непрерывной, декали — по тайлам.
+// на куски до упаковки. uOffset сохраняет непрерывность текстуры вдоль стены.
 export function splitLongWallSegments(segments, maxWorldLen) {
   const out = [];
   for (let i = 0; i < segments.length; i++) {
@@ -250,9 +250,71 @@ export function splitLongWallSegments(segments, maxWorldLen) {
       const az = seg.p0[1] + dz * along;
       const bx = seg.p0[0] + dx * (along + chunk);
       const bz = seg.p0[1] + dz * (along + chunk);
-      out.push({ p0: [ax, az], p1: [bx, bz], nx: seg.nx, nz: seg.nz, len: chunk });
+      out.push({
+        p0: [ax, az],
+        p1: [bx, bz],
+        nx: seg.nx,
+        nz: seg.nz,
+        len: chunk,
+        uOffset: along,
+      });
       along += chunk;
     }
   }
   return out;
+}
+
+// Стыкует uOffset вдоль коллинеарных сегментов, которые merge не склеил
+// (тонкие стены, погрешность нормалей marching squares).
+export function chainWallUStarts(segments) {
+  const keyOf = (p) => p[0].toFixed(4) + ',' + p[1].toFixed(4);
+  const COS = 0.9995;
+  const at = new Map();
+
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    s._dir = [(s.p1[0] - s.p0[0]) / s.len, (s.p1[1] - s.p0[1]) / s.len];
+    if (s.uOffset === undefined) s.uOffset = 0;
+    for (const [k, end] of [
+      [keyOf(s.p0), 0],
+      [keyOf(s.p1), 1],
+    ]) {
+      if (!at.has(k)) at.set(k, []);
+      at.get(k).push({ i, end });
+    }
+  }
+
+  const extendFrom = (fromIdx, fromEnd, uNext) => {
+    const s = segments[fromIdx];
+    const key = keyOf(fromEnd === 1 ? s.p1 : s.p0);
+    const list = at.get(key);
+    if (!list) return;
+    for (let c = 0; c < list.length; c++) {
+      const { i, end } = list[c];
+      if (i === fromIdx) continue;
+      const o = segments[i];
+      if (o._uvChained) continue;
+      let outward;
+      if (fromEnd === 1 && end === 0) outward = s._dir[0] * o._dir[0] + s._dir[1] * o._dir[1];
+      else if (fromEnd === 0 && end === 1)
+        outward = s._dir[0] * -o._dir[0] + s._dir[1] * -o._dir[1];
+      else continue;
+      if (outward < COS) continue;
+      if (s.nx * o.nx + s.nz * o.nz < COS) continue;
+      o.uOffset = uNext;
+      o._uvChained = true;
+      extendFrom(i, 1, uNext + o.len);
+    }
+  };
+
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i]._uvChained) continue;
+    segments[i]._uvChained = true;
+    extendFrom(i, 1, segments[i].uOffset + segments[i].len);
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    delete segments[i]._dir;
+    delete segments[i]._uvChained;
+  }
 }

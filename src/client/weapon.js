@@ -1,7 +1,9 @@
-import { state } from '@core/runtime-state.js';
-import { Shader } from '@engine/shader.js';
-import { Texture } from '@engine/texture.js';
-import { WEAPON } from '@game/global.js';
+import { state } from '@/core/runtime-state.js';
+
+import { Shader } from '@/engine/shader.js';
+import { Texture } from '@/engine/texture.js';
+
+import { WEAPON } from '@/global.js';
 
 import { Sound } from './sound.js';
 
@@ -157,10 +159,40 @@ WeaponClient.load = function () {
     'fog_uv',
   ]);
 
-  // Луч молнии (shaft): как в оригинальном instagib.io — текстура молнии,
-  // прокручиваемая вдоль луча через mat_tex (UV-скролл). Тот же color-фрагмент.
-  const vert_tex = Shader.vertexShader(true, true, 'gl_Position');
-  WeaponClient.shader_shaft = new Shader(vert_tex, WeaponClient.frag_noshadow_color, [
+  // Луч молнии (shaft): текстура прокручивается вдоль луча; texcoord.zw = позиция
+  // вдоль/поперёк сегмента (0..1) — для мягкого склеивания стыков между сегментами.
+  const vert_shaft = Shader.vertexShader(true, true, 'position');
+  WeaponClient.frag_shaft = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
+
+    uniform sampler2D tex;
+    uniform sampler2D tex_visible;
+    uniform vec4 color;
+    uniform vec4 fog_uv;
+    varying vec4 texcoord;
+
+    void main()
+    {
+        vec4 col = texture2D(tex, texcoord.xy);
+        if (col.a < 0.1) discard;
+        float along = texcoord.z;
+        col.a *= smoothstep(0.0, 0.2, along) * smoothstep(1.0, 0.78, along);
+        if (col.a < 0.06) discard;
+        if (fog_uv.z > 0.5) {
+            float mapFog = texture2D(tex_visible, fog_uv.xy).r;
+            mapFog = mapFog * mapFog * (3.0 - 2.0 * mapFog);
+            float fog = clamp(max(mapFog, fog_uv.w), 0.0, 1.0);
+            vec3 fogCol = vec3(0.012, 0.018, 0.032);
+            col.rgb = mix(col.rgb * color.rgb, fogCol, fog * 0.92);
+            col.a *= color.a * (1.0 - fog * 0.95);
+        } else {
+            col *= color;
+        }
+        gl_FragColor = col;
+    }`;
+  WeaponClient.shader_shaft = new Shader(vert_shaft, WeaponClient.frag_shaft, [
     'mat_pos',
     'mat_tex',
     'tex',

@@ -1,5 +1,7 @@
-import { state } from '@core/runtime-state.js';
+import { state } from '@/core/runtime-state.js';
 
+import { uploadDepthTexture } from './glcontext.js';
+import { bindMainFramebuffer } from './framebuffer.js';
 import { Shader } from './shader.js';
 
 // Depth-prepass: рисует геометрию (только позиция → глубина) в FBO с depth-
@@ -28,23 +30,19 @@ function setNearestClamp(gl) {
 
 export class DepthTarget {
   constructor() {
-    const gl = state.gl;
-    this.ext =
-      gl.getExtension('WEBGL_depth_texture') ||
-      gl.getExtension('WEBKIT_WEBGL_depth_texture') ||
-      gl.getExtension('MOZ_WEBGL_depth_texture');
+    this.depthTexSupported = !!state.depthTexture;
     this.fbo = null;
     this.colorTex = null;
     this.depthTex = null;
     this.width = 0;
     this.height = 0;
     this.ready = false;
-    this.shader = this.ext ? new Shader(VERT, FRAG, ['view_proj']) : null;
+    this.shader = this.depthTexSupported ? new Shader(VERT, FRAG, ['view_proj']) : null;
   }
 
-  // Пересоздаёт FBO под текущий размер канваса. false — расширения нет.
+  // Пересоздаёт FBO под текущий размер канваса. false — depth-текстуры нет.
   ensure() {
-    if (!this.ext) return false;
+    if (!this.depthTexSupported) return false;
     const gl = state.gl;
     const w = state.canvas.width;
     const h = state.canvas.height;
@@ -64,17 +62,7 @@ export class DepthTarget {
 
     this.depthTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.DEPTH_COMPONENT,
-      w,
-      h,
-      0,
-      gl.DEPTH_COMPONENT,
-      gl.UNSIGNED_SHORT,
-      null,
-    );
+    uploadDepthTexture(gl, w, h);
     setNearestClamp(gl);
 
     this.fbo = gl.createFramebuffer();
@@ -116,8 +104,7 @@ export class DepthTarget {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, state.canvas.width, state.canvas.height);
+    bindMainFramebuffer();
     return true;
   }
 }

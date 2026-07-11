@@ -1,4 +1,5 @@
-import { SpawnFx } from '@client/spawnfx.js';
+import { SpawnFx } from '@/client/spawnfx.js';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 

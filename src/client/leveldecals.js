@@ -1,6 +1,8 @@
-import { state } from '@core/runtime-state.js';
-import { Framebuffer } from '@engine/FBO.js';
-import { Shader } from '@engine/shader.js';
+import { Console } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+import { Framebuffer } from '@/engine/FBO.js';
+import { Shader } from '@/engine/shader.js';
 
 
 const WALL_DECAL_HALF_LIFE_MS = 45000;
@@ -73,6 +75,9 @@ export class LevelDecals {
     this.wallAtlasPpu = 32;
     this.wallFbo = null;
     this.lastFadeTime = Date.now();
+    this.decalActivity = Date.now();
+    this.fadeFloorFactor = 1;
+    this.fadeWallFactor = 1;
 
     const decalRes = Math.min(2048, Math.max(1280, size * 40));
     this.floorFbo = new Framebuffer(decalRes, decalRes);
@@ -108,11 +113,18 @@ export class LevelDecals {
     const dt = Math.min(100, now - this.lastFadeTime);
     this.lastFadeTime = now;
     if (dt <= 0) return;
-    const gl = state.gl;
     const factor = Math.pow(0.5, dt / 45000);
+    const wallFactor = Math.pow(0.5, dt / WALL_DECAL_HALF_LIFE_MS);
+    this.fadeFloorFactor *= factor;
+    this.fadeWallFactor *= wallFactor;
+    if (now - this.decalActivity > 2500 && this.fadeFloorFactor > 0.997 && this.fadeWallFactor > 0.997) {
+      return;
+    }
+    if (factor > 0.99998 && wallFactor > 0.99998) return;
+    const gl = state.gl;
     this.fadeTarget(this.floorFbo, factor);
     if (this.wallFbo) {
-      this.fadeTarget(this.wallFbo, Math.pow(0.5, dt / WALL_DECAL_HALF_LIFE_MS));
+      this.fadeTarget(this.wallFbo, wallFactor);
     }
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
@@ -161,14 +173,15 @@ export class LevelDecals {
     const applyPlacements = (placements, res, ppu) => {
       this.wallAtlasRes = res;
       this.wallAtlasPpu = ppu;
+      const inset = 0.5 / res;
       for (let i = 0; i < placements.length; i++) {
         const p = placements[i];
         p.seg.atlasPx = { x: p.x, y: p.y, w: p.w, h: p.h };
         p.seg.atlasRect = {
-          u0: p.x / res,
-          u1: (p.x + p.w) / res,
-          v0: 1.0 - (p.y + p.h) / res,
-          v1: 1.0 - p.y / res,
+          u0: (p.x + inset) / res,
+          u1: (p.x + p.w - inset) / res,
+          v0: 1.0 - (p.y + p.h - inset) / res,
+          v1: 1.0 - (p.y + inset) / res,
         };
         p.seg.ppu = ppu;
       }
@@ -185,7 +198,7 @@ export class LevelDecals {
     }
     if (!packed) {
       const placements = tryPack(4096, WALL_PPU_MIN) || [];
-      console.warn('wall decal atlas: fallback pack at minimum PPU');
+      Console.info('wall decal atlas: fallback pack at minimum PPU');
       applyPlacements(placements, 4096, WALL_PPU_MIN);
     }
 
@@ -248,6 +261,9 @@ export class LevelDecals {
 
   renderDecal(dynent, tex, color, shAdd) {
     if (!tex || !tex.getId || !tex.getId()) return;
+    this.decalActivity = Date.now();
+    this.fadeFloorFactor = 1;
+    this.fadeWallFactor = 1;
     const d = dirFromDynent(dynent.dir);
     const sz = Math.max(dynent.size.x, dynent.size.y) * 0.5;
     const canWall = !!dynent.dir || (dynent.pos_z !== undefined && dynent.pos_z !== null);

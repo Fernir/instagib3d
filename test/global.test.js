@@ -1,4 +1,5 @@
-import { WEAPON, ITEM, EVENT } from '@game/global.js';
+import { WEAPON, ITEM, EVENT } from '@/global.js';
+
 import { describe, it, expect } from 'vitest';
 
 

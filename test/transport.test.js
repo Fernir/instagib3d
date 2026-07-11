@@ -1,8 +1,14 @@
-import { GameEvent } from '@combat/event.js';
-import { Vector } from '@core/vector.js';
-import { Dynent } from '@entity/dynent.js';
-import { EVENT, ITEM, WEAPON } from '@game/global.js';
-import { __testing as transport } from '@network/transport.js';
+import { Vector } from '@/core/vector.js';
+
+import { EVENT, ITEM, WEAPON } from '@/global.js';
+
+import { GameEvent } from '@/sim/game-events.js';
+
+import { Dynent } from '@/sim/dynent.js';
+
+
+import { __testing as transport } from '@/net/transport.js';
+
 import { describe, expect, it } from 'vitest';
 
 

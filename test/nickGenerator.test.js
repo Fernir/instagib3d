@@ -1,4 +1,5 @@
-import { NickGenerator } from '@core/nickGenerator/index.js';
+import { NickGenerator } from '@/core/nickGenerator/index.js';
+
 import { describe, it, expect } from 'vitest';
 
 
@@ -32,7 +33,7 @@ describe('NickGenerator — генератор ников', () => {
     const gen = new NickGenerator(4);
     for (let i = 0; i < 50; i++) {
       const nick = gen.gener(10);
-      expect(nick).toMatch(/^[a-zA-Z]*$/);
+      expect(nick).toMatch(/^[a-zA-Z.]+$/);
     }
   });
 });

@@ -1,7 +1,8 @@
-import { state } from '@core/runtime-state.js';
-import { drawDepthPrepass, drawWireLines, isWireframe } from '@engine/mesh.js';
-import { Shader } from '@engine/shader.js';
-import { Texture } from '@engine/texture.js';
+import { state } from '@/core/runtime-state.js';
+
+import { drawDepthPrepass, drawWireFillInterleaved, drawWireLines, ensureDynamicBuffer, isWireframe } from '@/engine/mesh.js';
+import { Shader } from '@/engine/shader.js';
+import { Texture } from '@/engine/texture.js';
 
 
 const MD2_IDENT = 844121161; // "IDP2"
@@ -221,6 +222,31 @@ const MD2_LIGHTS_GLSL = `
 
 let cachedOutlineShader = null;
 let cachedDepthShader = null;
+
+function transformPoint(m, p) {
+  const x = p[0];
+  const y = p[1];
+  const z = p[2];
+  return [
+    m[0] * x + m[4] * y + m[8] * z + m[12],
+    m[1] * x + m[5] * y + m[9] * z + m[13],
+    m[2] * x + m[6] * y + m[10] * z + m[14],
+  ];
+}
+
+function triangleNormal(a, b, c) {
+  const ux = b[0] - a[0];
+  const uy = b[1] - a[1];
+  const uz = b[2] - a[2];
+  const vx = c[0] - a[0];
+  const vy = c[1] - a[1];
+  const vz = c[2] - a[2];
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  return [nx / len, ny / len, nz / len];
+}
 
 // Depth-only шейдер для прохода карты теней: та же интерполяция кадров, что в
 // основном шейдере, но без освещения — пишем только глубину из light-space.
@@ -738,6 +764,74 @@ class MD2Model {
     }
   }
 
+  renderWireFill(modelMatrix, frameA, frameB, lerp, color, opts) {
+    if (!this.frameBuffers.length || !state.viewProj3D) return;
+    const gl = state.gl;
+    const mat4 = state.mat4;
+    const last = this.frameBuffers.length - 1;
+    const a = Math.max(0, Math.min(last, frameA | 0));
+    const b = Math.max(0, Math.min(last, frameB | 0));
+    const mix = Math.max(0, Math.min(1, lerp || 0));
+
+    const fillCap = this.vertexCount * 6;
+    if (!this.wireFillFloats || this.wireFillFloats.length < fillCap) {
+      this.wireFillFloats = new Float32Array(fillCap);
+    }
+    if (!this._wireFillPool) this._wireFillPool = { buffer: null, bytes: 0 };
+    ensureDynamicBuffer(gl, this._wireFillPool, this.wireFillFloats.byteLength);
+    const wireFillBuffer = this._wireFillPool.buffer;
+
+    const fa = this.md2.frames[a];
+    const fb = this.md2.frames[b];
+    const posAt = (slot) => {
+      const vi = this.topology[slot].vi;
+      const p0 = mapMd2Vertex(fa, vi);
+      if (mix <= 0.001) return p0;
+      const p1 = mapMd2Vertex(fb, vi);
+      return [
+        p0[0] + (p1[0] - p0[0]) * mix,
+        p0[1] + (p1[1] - p0[1]) * mix,
+        p0[2] + (p1[2] - p0[2]) * mix,
+      ];
+    };
+
+    const out = this.wireFillFloats;
+    let o = 0;
+    const pushVert = (wp, nrm) => {
+      out[o++] = wp[0];
+      out[o++] = wp[1];
+      out[o++] = wp[2];
+      out[o++] = nrm[0];
+      out[o++] = nrm[1];
+      out[o++] = nrm[2];
+    };
+
+    for (let tri = 0; tri + 2 < this.vertexCount; tri += 3) {
+      const p0 = posAt(tri);
+      const p1 = posAt(tri + 1);
+      const p2 = posAt(tri + 2);
+      const w0 = transformPoint(modelMatrix, p0);
+      const w1 = transformPoint(modelMatrix, p1);
+      const w2 = transformPoint(modelMatrix, p2);
+      const nrm = triangleNormal(w0, w1, w2);
+      pushVert(w0, nrm);
+      pushVert(w1, nrm);
+      pushVert(w2, nrm);
+    }
+
+    const vertCount = o / 6;
+    if (vertCount === 0) return;
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, wireFillBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, out.subarray(0, o));
+    const rgb = color || [0.75, 0.78, 0.82];
+    drawWireFillInterleaved(wireFillBuffer, vertCount, 6, 3, rgb, state.viewProj3D, opts);
+    if (state.quadBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    }
+  }
+
   renderWireDepth(modelMatrix, frameA, frameB, lerp, cullFront) {
     if (!this.frameBuffers.length) return;
     const gl = state.gl;
@@ -760,12 +854,15 @@ class MD2Model {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.frameBuffers[b]);
     gl.vertexAttribPointer(nextLoc, 3, gl.FLOAT, false, 0, 0);
     const prevCull = gl.isEnabled(gl.CULL_FACE);
-    gl.enable(gl.CULL_FACE);
-    gl.cullFace(cullFront ? gl.FRONT : gl.BACK);
-    drawDepthPrepass(() => gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount));
+    const prevCullFace = gl.getParameter(gl.CULL_FACE_MODE);
+    drawDepthPrepass(() => gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount), {
+      cullFront: !!cullFront,
+    });
     gl.disableVertexAttribArray(nextLoc);
-    if (!prevCull) gl.disable(gl.CULL_FACE);
-    else gl.cullFace(gl.BACK);
+    if (prevCull) {
+      gl.enable(gl.CULL_FACE);
+      gl.cullFace(prevCullFace);
+    } else gl.disable(gl.CULL_FACE);
     if (state.quadBuffer) {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -782,12 +879,12 @@ class MD2Model {
     const mix = Math.max(0, Math.min(1, lerp || 0));
 
     const lineCap = this.vertexCount * 6;
-    if (!this.wireLineBuffer) {
+    if (!this.wireLineFloats || this.wireLineFloats.length < lineCap) {
       this.wireLineFloats = new Float32Array(lineCap);
-      this.wireLineBuffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.wireLineBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.wireLineFloats, gl.DYNAMIC_DRAW);
     }
+    if (!this._wireLinePool) this._wireLinePool = { buffer: null, bytes: 0 };
+    ensureDynamicBuffer(gl, this._wireLinePool, this.wireLineFloats.byteLength);
+    const wireLineBuffer = this._wireLinePool.buffer;
 
     const fa = this.md2.frames[a];
     const fb = this.md2.frames[b];
@@ -831,9 +928,9 @@ class MD2Model {
 
     if (o === 0) return;
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.wireLineBuffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, wireLineBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, out.subarray(0, o));
-    drawWireLines(this.wireLineBuffer, o / 3, color || [0.85, 0.95, 1.0, 1], matPos, 0.0012, depthTest);
+    drawWireLines(wireLineBuffer, o / 3, color || [0.85, 0.95, 1.0, 1], matPos, 0.0012, depthTest);
     if (state.quadBuffer) {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);

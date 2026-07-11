@@ -1,4 +1,4 @@
-import { Console } from '@game/polyfill.js';
+import { Console } from './polyfill.js';
 
 import { Random } from './utility.js';
 import { Vector } from './vector.js';

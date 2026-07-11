@@ -1,14 +1,19 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { Console } from '@game/polyfill.js';
+import { Event } from '@/core/event.js';
+import { Console } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
 
+import { isMobileControls } from '@/engine/mobilecontrols.js';
+import { uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc } from '@/engine/render_text.js';
 import { Shader } from './shader.js';
+
+const SLIDE_SPEED = 14;
+const INPUT_PAD = 0.04;
 
 Event.on('keydown', function (key, code) {
   if (code === Console.TILDA_CODE || key === Console.TILDA_MAC || key === Console.TILDA_WIN) {
-    Console.show = !Console.show;
-    if (Console.show && document.pointerLockElement) document.exitPointerLock?.();
+    Console.toggle();
   } else if (Console.show) {
+    if (isMobileControls() && document.activeElement === Console._mobileInput) return;
     if (key.length === 1) {
       Console.current_command += key;
     } else if (key === Console.ENTER) {
@@ -40,7 +45,7 @@ Event.on('mousewheel', function (delta) {
     if (delta < 0) Console.scroll += 2;
     if (delta > 0) Console.scroll -= 2;
     if (Console.scroll < 0) Console.scroll = 0;
-    if (Console.scroll > Console.messages - 1) Console.scroll = Console.messages - 1;
+    if (Console.scroll > Console.messages.length - 1) Console.scroll = Console.messages.length - 1;
   }
 });
 
@@ -54,9 +59,15 @@ Console.addMessage = function (tag, ...args) {
     str = '[INFO] ' + str;
     msg = '#g[INFO] ' + msg;
   }
-  console.log(str);
 
   Console.messages.push(msg);
+  const MAX_MESSAGES = 300;
+  if (Console.messages.length > MAX_MESSAGES) {
+    Console.messages.splice(0, Console.messages.length - MAX_MESSAGES);
+    if (Console.scroll > Console.messages.length - 1) {
+      Console.scroll = Math.max(0, Console.messages.length - 1);
+    }
+  }
 };
 
 Console.debug = function (...args) {
@@ -134,6 +145,8 @@ Console.load = function () {
   Console.ERROR = 2;
 
   Console.show = false;
+  Console.slide = 0;
+  Console._lastTick = 0;
   Console.scroll = 0;
   Console.current_command = '';
 
@@ -177,62 +190,200 @@ Console.load = function () {
   let frag =
     '\n\
     #ifdef GL_ES\n\
-    // define default precision for float, vec, mat.\n\
     precision highp float;\n\
     #endif\n\
-    \n\
     uniform vec4 color;\n\
     varying vec4 texcoord;\n\
-    \n\
     void main()\n\
     {\n\
         gl_FragColor = color;\n\
     }\n';
 
   Console.shader = new Shader(vert, frag, ['mat_pos', 'color']);
+  Console.panelBuffer = null;
+  Console.ensureMobileInput();
 };
 
+Console.ensureMobileInput = function () {
+  if (Console._mobileInput || typeof document === 'undefined') return Console._mobileInput;
+  const el = document.createElement('input');
+  el.type = 'text';
+  el.autocomplete = 'off';
+  el.autocapitalize = 'off';
+  el.autocorrect = 'off';
+  el.spellcheck = false;
+  el.setAttribute('enterkeyhint', 'done');
+  el.setAttribute('inputmode', 'text');
+  el.style.position = 'fixed';
+  el.style.left = '0';
+  el.style.top = '0';
+  el.style.width = '1px';
+  el.style.height = '1px';
+  el.style.opacity = '0.01';
+  el.style.border = 'none';
+  el.style.padding = '0';
+  el.style.margin = '0';
+  el.style.zIndex = '9999';
+  document.body.appendChild(el);
+
+  el.addEventListener('input', () => {
+    if (Console.show) Console.current_command = el.value;
+  });
+  el.addEventListener('keydown', (e) => {
+    if (!Console.show) return;
+    if (e.key === 'Enter') {
+      Console.dispatchCommand(Console.current_command);
+      Console.current_command = '';
+      el.value = '';
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      Console.current_pos--;
+      if (Console.current_pos < 0) Console.current_pos = 0;
+      if (Console.current_pos >= Console.stack.length) {
+        Console.current_pos = Console.stack.length;
+        Console.current_command = '';
+      } else if (Console.stack.length > 0) {
+        Console.current_command = Console.stack[Console.current_pos];
+      }
+      el.value = Console.current_command;
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      Console.current_pos++;
+      if (Console.current_pos >= Console.stack.length) {
+        Console.current_pos = Console.stack.length;
+        Console.current_command = '';
+      } else if (Console.stack.length > 0) {
+        Console.current_command = Console.stack[Console.current_pos];
+      }
+      el.value = Console.current_command;
+      e.preventDefault();
+    } else if (e.key === 'Tab') {
+      Console.current_command = Console.getAutocomplete();
+      el.value = Console.current_command;
+      e.preventDefault();
+    }
+  });
+
+  Console._mobileInput = el;
+  return el;
+};
+
+Console.focusMobileInput = function () {
+  if (!isMobileControls()) return;
+  const el = Console.ensureMobileInput();
+  if (!el) return;
+  el.value = Console.current_command || '';
+  el.focus({ preventScroll: true });
+  const len = el.value.length;
+  if (el.setSelectionRange) el.setSelectionRange(len, len);
+};
+
+Console.blurMobileInput = function () {
+  Console._mobileInput?.blur();
+};
+
+Console.toggle = function () {
+  Console.show = !Console.show;
+  if (Console.show) {
+    if (document.pointerLockElement) document.exitPointerLock?.();
+    Console.focusMobileInput();
+  } else {
+    Console.blurMobileInput();
+  }
+};
+
+function ensureConsolePanelBuffer() {
+  if (Console.panelBuffer) return Console.panelBuffer;
+  const gl = state.gl;
+  Console.panelBuffer = gl.createBuffer();
+  return Console.panelBuffer;
+}
+
+function smoothstep(t) {
+  return t * t * (3 - 2 * t);
+}
+
+function panelBounds(ease) {
+  const panelBottom = 1.0 - ease;
+  const panelTop = 2.0 - ease;
+  return { panelBottom, panelTop };
+}
+
 Console.render = function () {
+  const now = Date.now();
+  const dt = Console._lastTick ? Math.min(0.05, (now - Console._lastTick) * 0.001) : 0.016;
+  Console._lastTick = now;
+  const target = Console.show ? 1 : 0;
+  Console.slide += (target - Console.slide) * Math.min(1, dt * SLIDE_SPEED);
+  if (Console.slide < 0.004 && !Console.show) return false;
+
+  const ease = smoothstep(Console.slide);
+  const { panelBottom, panelTop } = panelBounds(ease);
+
+  const lineHalf = uiSnapHalfNdc(0.028);
+  const textSize = uiTextSizeForHalfNdc(lineHalf, 2, 0.028);
+  const lineStep = uiLineStep(lineHalf);
+  const inputHalf = uiSnapHalfNdc(0.022);
+  const inputSize = uiTextSizeForHalfNdc(inputHalf, 2, 0.022);
+  const inputY = panelBottom + INPUT_PAD + inputHalf;
+  const msgTop = panelTop - INPUT_PAD - lineHalf;
+  const msgLimit = inputY + lineStep * 1.1;
+
   function render_fon() {
-    let gl = state.gl;
-    let mat4 = state.mat4;
+    const gl = state.gl;
+    const mat4 = state.mat4;
+    const buf = ensureConsolePanelBuffer();
+    const verts = new Float32Array([
+      -1, panelBottom,
+      1, panelBottom,
+      -1, panelTop,
+      1, panelTop,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
     gl.enable(gl.BLEND);
-    let mat_pos = mat4.create();
-    mat4.scal(mat_pos, [1, 0.5]);
-    mat4.trans(mat_pos, [0, 1]);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    const mat_pos = mat4.create();
     Console.shader.use();
     Console.shader.matrix(Console.shader.mat_pos, mat_pos);
-    let color = Console.variable(
+    const color = Console.variable(
       'console-color',
       'background color of console',
       [0.5, 0.5, 0.2, 0.5],
     );
-    Console.shader.vector(Console.shader.color, color);
+    Console.shader.vector(Console.shader.color, [color[0], color[1], color[2], color[3] * ease]);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.disable(gl.BLEND);
-  }
-  function render_messages() {
-    let y = 0.1;
-    for (let i = Console.messages.length - 1 - Console.scroll; i >= 0; i--) {
-      state.text.render([-0.95, y], 2, Console.messages[i], 1);
-      y += 0.06;
-      if (y > 1) break;
+
+    if (state.quadBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     }
   }
+
+  function render_messages() {
+    let y = msgTop;
+    for (let i = Console.messages.length - 1 - Console.scroll; i >= 0; i--) {
+      if (y < msgLimit) break;
+      state.text.render([-0.95, y], textSize, Console.messages[i], 1, { alpha: ease });
+      y -= lineStep;
+    }
+  }
+
   function render_command() {
     let cmd = Console.current_command;
     if ((((Date.now() % 1000) / 500) | 0) === 0) cmd += '|';
-    state.text.render([-0.95, 0.04], 2, cmd, 1);
-
-    let autocomplete = Console.getAutocomplete();
-    state.text.render([-0.95, 0.04], 2, autocomplete, 1, { alpha: 0.5 });
+    state.text.render([-0.95, inputY], inputSize, cmd, 1, { alpha: ease });
+    const autocomplete = Console.getAutocomplete();
+    state.text.render([-0.95, inputY], inputSize, autocomplete, 1, { alpha: 0.45 * ease });
   }
 
-  if (Console.show) {
-    render_fon();
-    render_messages();
-    render_command();
-  }
+  render_fon();
+  render_messages();
+  render_command();
 
-  return Console.show;
+  return Console.show || Console.slide > 0.004;
 };

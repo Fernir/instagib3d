@@ -1,9 +1,11 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { Vector } from '@core/vector.js';
-import { Dynent } from '@entity/dynent.js';
-import { WEAPON, ITEM } from '@game/global.js';
-import { config } from '@game/polyfill.js';
+import { Event } from '@/core/event.js';
+import { config } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+import { Vector } from '@/core/vector.js';
+
+import { WEAPON, ITEM } from '@/global.js';
+
+import { Dynent } from '@/sim/dynent.js';
 
 class BulletClient {
   constructor(type, pos, angle, power, id, pitch = 0, z) {
@@ -23,6 +25,9 @@ class BulletClient {
 
     this.dead = Date.now() + WEAPON.wea_tabl[type].lifetime;
     this.last_update = Date.now();
+    if (type === WEAPON.ROCKET) {
+      this.trailPts = [{ x: pos.x, y: this.z, z: pos.y }];
+    }
   }
 
   update() {
@@ -87,7 +92,19 @@ class BulletClient {
       }
 
       if (this.type === WEAPON.ROCKET) {
-        if (state.Q2FX) state.Q2FX.rocketTrail(this.dynent.pos, this.z);
+        if (!this.trailPts) {
+          this.trailPts = [{ x: this.dynent.pos.x, y: this.z, z: this.dynent.pos.y }];
+        } else {
+          const last = this.trailPts[this.trailPts.length - 1];
+          const dx = this.dynent.pos.x - last.x;
+          const dy = this.z - last.y;
+          const dz = this.dynent.pos.y - last.z;
+          if (dx * dx + dy * dy + dz * dz > 0.025) {
+            this.trailPts.push({ x: this.dynent.pos.x, y: this.z, z: this.dynent.pos.y });
+            if (this.trailPts.length > 32) this.trailPts.shift();
+          }
+        }
+        if (state.Q2FX) state.Q2FX.rocketTrail(this.dynent.pos, this.z, this.dynent.vel);
       } else if (this.type === WEAPON.PLASMA && state.Q2FX) {
         state.Q2FX.plasmaTrail(this.dynent.pos, this.power === ITEM.QUAD, this.z);
       } else if (this.type === WEAPON.ZENIT && state.Q2FX) {
@@ -406,7 +423,7 @@ BulletClient.render = function (camera) {
 const PROJECTILE_LIGHTS = {
   [WEAPON.PISTOL]: { color: [1.0, 0.95, 0.35], intensity: 1.2, radius: 4.5 },
   [WEAPON.PLASMA]: { color: [0.45, 0.75, 1.6], intensity: 1.3, radius: 5.5 },
-  [WEAPON.ROCKET]: { color: [1.6, 0.7, 0.25], intensity: 1.4, radius: 6.5 },
+  [WEAPON.ROCKET]: { color: [1.75, 0.82, 0.28], intensity: 1.65, radius: 7.5 },
   [WEAPON.ZENIT]: { color: [1.0, 0.4, 1.4], intensity: 1.1, radius: 5.0 },
 };
 BulletClient.collectLights = function (levelRender) {

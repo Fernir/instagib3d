@@ -1,12 +1,17 @@
-import { state } from '@core/runtime-state.js';
-import { Billboard } from '@engine/billboard.js';
-import { Texture } from '@engine/texture.js';
-import { Dynent } from '@entity/dynent.js';
-import { assert } from '@game/polyfill.js';
+import { assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+import { Billboard } from '@/engine/billboard.js';
+import { Texture } from '@/engine/texture.js';
+
+import { Dynent } from '@/sim/dynent.js';
 
 function applyCommonShaderState(shader, tex_id, mat_pos, states) {
   shader.use();
   shader.texture(shader.tex, tex_id, 0);
+  if (states && states.extra_tex) {
+    shader.texture(states.extra_tex.location, states.extra_tex.id, 1);
+  }
   // Туман войны отключён — спрайты не затемняются картой видимости.
   if (shader.fog_uv) {
     shader.vector(shader.fog_uv, [0, 0, 0, 0]);
@@ -173,7 +178,7 @@ function render3DBillboard(camera, shader, tex_id, pos, size, angle, states) {
 
   const sx = Math.abs(size[0]);
   const sy = Math.abs(size[1]);
-  if (sy > sx * 3.0) {
+  if (!(states && states.force_billboard) && sy > sx * 3.0) {
     return render3DBeam(camera, shader, tex_id, pos, size, angle || 0, states);
   }
 
@@ -187,7 +192,7 @@ function render3DBillboard(camera, shader, tex_id, pos, size, angle, states) {
   else center_y = sy * 0.5 + y_offset;
 
   const mat_pos = state.mat4.create();
-  Billboard.cylindrical(mat_pos, yaw, pos.x, center_y, pos.y, sx * 0.5, sy * 0.5, flip);
+  Billboard.cylindrical(mat_pos, yaw, pos.x, center_y, pos.y, sx * 0.5, sy * 0.5, flip, angle || 0);
 
   applyCommonShaderState(shader, tex_id, mat_pos, states);
 

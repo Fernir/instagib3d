@@ -1,18 +1,38 @@
+html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
 body {
   margin: 0;
   padding: 0;
-  background: #000;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
+  background: #000;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .js-app {
   width: 100vw;
+  width: 100dvw;
   height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 canvas#plot {
   display: block;
   width: 100vw;
+  width: 100dvw;
   height: 100vh;
+  height: 100dvh;
   cursor: crosshair;
+  touch-action: none;
 }

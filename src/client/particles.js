@@ -1,12 +1,15 @@
-import { Buffer } from '@core/buffer.js';
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { Vector } from '@core/vector.js';
-import { Shader } from '@engine/shader.js';
-import { Texture } from '@engine/texture.js';
-import { Dynent } from '@entity/dynent.js';
-import { WEAPON, ITEM } from '@game/global.js';
-import { Console } from '@game/polyfill.js';
+import { Buffer } from '@/core/buffer.js';
+import { Event } from '@/core/event.js';
+import { Console } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+import { Vector } from '@/core/vector.js';
+
+import { Shader } from '@/engine/shader.js';
+import { Texture } from '@/engine/texture.js';
+
+import { WEAPON, ITEM } from '@/global.js';
+
+import { Dynent } from '@/sim/dynent.js';
 
 //dir - Vector
 class Particle {
@@ -288,6 +291,7 @@ Particle.load = function () {
   Particle.tex_respawn = new Texture('/game/textures/fx/particles/respawn.png');
 
   Particle.particles = [];
+  Particle.MAX_PARTICLES = 500;
 
   let vert = Shader.vertexShader(true, false, 'gl_Position');
 
@@ -358,7 +362,9 @@ Particle.load = function () {
 
 //dir - Vector
 Particle.create = function (type, pos, dir, count) {
+  const max = Particle.MAX_PARTICLES || 500;
   for (let i = 0; i < count; i++) {
+    if (Particle.particles.length >= max) break;
     let particle = new Particle(type, pos, dir);
     particle.rnd = Math.random();
     Particle.particles.push(particle);

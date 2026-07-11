@@ -1,5 +1,7 @@
-import { state } from '@core/runtime-state.js';
-import { buildWireLineBuffer, isWireframe } from '@engine/mesh.js';
+import { state } from '@/core/runtime-state.js';
+
+import { buildWireLineBuffer, isWireframe } from '@/engine/mesh.js';
+
 import { describe, it, expect } from 'vitest';
 
 

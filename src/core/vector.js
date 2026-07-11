@@ -1,4 +1,4 @@
-import { Console } from '@game/polyfill.js';
+import { Console } from './polyfill.js';
 
 class Vector {
   constructor(arg1, arg2) {

@@ -1,13 +1,19 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { isWireframe } from '@engine/mesh.js';
-import { Shader } from '@engine/shader.js';
-import { EVENT } from '@game/global.js';
-import { Console } from '@game/polyfill.js';
-import { Level } from '@level/level.js';
-import { FakeSocketClient } from '@network/fakesocket.js';
-import { Room } from '@network/room.js';
-import { Transport } from '@network/transport.js';
+import { Event } from '@/core/event.js';
+import { Console } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+import { isWireframe } from '@/engine/mesh.js';
+import { isMobileControls } from '@/engine/mobilecontrols.js';
+import { uiTextSizeForHalfNdc } from '@/engine/render_text.js';
+import { Shader } from '@/engine/shader.js';
+
+import { EVENT } from '@/global.js';
+
+import { Level } from '@/sim/level.js';
+
+import { FakeSocketClient } from '@/net/fakesocket.js';
+import { Transport } from '@/net/transport.js';
+import { Room } from '@/net/room.js';
 
 import { BotClient } from './bot.js';
 import { LevelRender } from './level.js';
@@ -245,9 +251,6 @@ class GameClient {
     this.getPing = function () {
       return transport ? transport.getPing() : 0;
     };
-    this.tryPlayClick = function () {
-      return self.handlePlayClick();
-    };
     this.handlePlayClick = function () {
       if (playing || !transport) return false;
       state.unlockAudio?.();
@@ -257,7 +260,7 @@ class GameClient {
       state.godNick = null;
       transport.addUser(nick, function () {
         transport.sendUserInputs();
-        state.canvas.requestPointerLock?.();
+        if (!isMobileControls()) state.canvas.requestPointerLock?.();
       });
       return true;
     };
@@ -372,7 +375,8 @@ class GameClient {
       // #r = красный (по умолчанию), #y = золотой при hover. Цвета в палитре
       // render_text.js — см. там же определение #y/#r.
       const label = hovered ? '#yPlay' : '#rPlay';
-      state.text.render([0, PLAY_BTN_Y], 2.8, label, 1, { center: true });
+      const textSize = uiTextSizeForHalfNdc(bh, 2.8, 0.085);
+      state.text.render([0, PLAY_BTN_Y], textSize, label, 1, { center: true });
     };
     this.playButtonHitTest = function () {
       const { bw, bh } = playButtonGeom();
@@ -453,6 +457,9 @@ class GameClient {
         const justGone = ghost.alive && inactive < GHOST_VISIBILITY_MS;
         if (justGone || isCorpse) {
           framebots.push(ghost);
+        } else if (inactive > CORPSE_LINGER_MS) {
+          delete allbots[id];
+          delete nicks[id];
         }
       }
 
@@ -542,10 +549,12 @@ class GameClient {
 
       if (state.Q2FX) state.Q2FX.update();
 
-      levelRender.beginSpritePass();
-
       if (isWireframe()) {
-        state.gl.disable(state.gl.BLEND);
+        const gl = state.gl;
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthMask(true);
+        gl.depthFunc(gl.LEQUAL);
+        gl.disable(gl.BLEND);
         frameitems.forEach(function (item) {
           state.Item.renderWireDepth(mybot.dynent, item);
         });
@@ -555,6 +564,12 @@ class GameClient {
         if (state.Bot && state.Bot.renderFirstPersonWeaponWire) {
           state.Bot.renderFirstPersonWeaponWire(mybot, 'depth');
         }
+        frameitems.forEach(function (item) {
+          state.Item.renderWireFill(mybot.dynent, item);
+        });
+        framebots.forEach(function (bot) {
+          bot.renderWireFill(mybot.dynent);
+        });
         levelRender.drawLevelWire();
         frameitems.forEach(function (item) {
           state.Item.renderWireDraw(mybot.dynent, item);
@@ -562,7 +577,15 @@ class GameClient {
         framebots.forEach(function (bot) {
           bot.renderWireDraw(mybot.dynent);
         });
-      } else {
+        if (state.Bot && state.Bot.renderFirstPersonWeaponWire) {
+          state.Bot.renderFirstPersonWeaponWire(mybot, 'depth');
+          state.Bot.renderFirstPersonWeaponWire(mybot, 'wire');
+        }
+      }
+
+      levelRender.beginSpritePass();
+
+      if (!isWireframe()) {
         state.gl.enable(state.gl.BLEND);
         state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
 
@@ -583,7 +606,7 @@ class GameClient {
         if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
       }
 
-      if (state.Bot && state.Bot.renderFirstPersonWeapon) {
+      if (state.Bot && state.Bot.renderFirstPersonWeapon && !isWireframe()) {
         state.Bot.renderFirstPersonWeapon(mybot);
       }
 
@@ -595,10 +618,11 @@ class GameClient {
       });
 
       state.wireframePass = false;
-      levelRender.renderMinimap(mybot.dynent);
+      if (!isWireframe() || isMobileControls()) levelRender.renderMinimap(mybot.dynent);
       state.HUD.render(mybot, table, playing);
       if (!playing) self.renderPlayOverlay();
-      else state.text.render([0, 0], 3, '#w+', 1, { center: true, visibile: true });
+      else if (!isWireframe())
+        state.text.render([0, 0], 3, '#w+', 1, { center: true, visibile: true });
     };
 
     if (socket.connect) socket.connect();

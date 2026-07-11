@@ -3,6 +3,10 @@
 
 export const state = {
   gl: null,
+  isWebGL2: false,
+  depthTexture: false,
+  frameUBO: null,
+  mainFramebuffer: null,
   canvas: null,
   quadBuffer: null,
   mat4: null,

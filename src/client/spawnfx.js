@@ -1,6 +1,7 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { Shader } from '@engine/shader.js';
+import { Event } from '@/core/event.js';
+import { state } from '@/core/runtime-state.js';
+
+import { Shader } from '@/engine/shader.js';
 
 
 const SPAWN_ANIM_MS = 2200;

@@ -1,12 +1,15 @@
-import { state } from '@core/runtime-state.js';
-import { Vector } from '@core/vector.js';
-import { buildWireLineBuffer, drawDepthPrepass, drawWireLines, isWireframe } from '@engine/mesh.js';
-import { Shader } from '@engine/shader.js';
-import { Texture } from '@engine/texture.js';
-import { Dynent } from '@entity/dynent.js';
-import { Item } from '@entity/item.js';
-import { ITEM, WEAPON } from '@game/global.js';
-import { Console } from '@game/polyfill.js';
+import { Console } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+import { Vector } from '@/core/vector.js';
+
+import { buildWireLineBuffer, drawStaticDepth, drawWireFillInterleaved, drawWireLines, isWireframe } from '@/engine/mesh.js';
+import { Shader } from '@/engine/shader.js';
+import { Texture } from '@/engine/texture.js';
+
+import { ITEM, WEAPON } from '@/global.js';
+
+import { Dynent } from '@/sim/dynent.js';
+import { Item } from '@/sim/item.js';
 
 import { MD2Model } from './md2.js';
 import { PICKUP_GLYPH_TRIANGLES } from './pickup-glyphs.js';
@@ -133,7 +136,7 @@ const ICON_FRAG =
   '  gl_FragColor = vec4(col, color.a);\n}';
 
 const CROSS = ['..###..', '..###..', '#######', '#######', '#######', '..###..', '..###..'];
-const GLYPH_MESH_VER = 4;
+const GLYPH_MESH_VER = 5;
 
 function gridTriangles(rows) {
   const h = rows.length;
@@ -305,11 +308,24 @@ class PickupIcon {
     this.init();
     const mesh = this.mesh(glyph);
     if (!mesh.count) return false;
-    const gl = state.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.buffer);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
-    drawDepthPrepass(() => gl.drawArrays(gl.TRIANGLES, 0, mesh.count), true);
+    const mat4 = state.mat4;
+    const m = this.modelMatrix(item);
+    const matPos = mat4.create();
+    mat4.multiply(matPos, state.viewProj3D, m);
+    drawStaticDepth(mesh.buffer, mesh.count, 6, matPos);
+    return true;
+  }
+
+  renderWireFill(item, glyph, color) {
+    this.init();
+    const mesh = this.mesh(glyph);
+    if (!mesh.count) return false;
+    const rgb = color || [0.7, 0.75, 0.85];
+    const mat4 = state.mat4;
+    const m = this.modelMatrix(item);
+    const matPos = mat4.create();
+    mat4.multiply(matPos, state.viewProj3D, m);
+    drawWireFillInterleaved(mesh.buffer, mesh.count, 6, 3, rgb, matPos);
     return true;
   }
 
@@ -393,6 +409,18 @@ Item.renderWireDepth = function (camera, item) {
   if (!spec || !spec.model || !spec.model.frameBuffers || !spec.model.frameBuffers.length) return false;
   if (!spec.model.ready()) return false;
   spec.model.renderWireDepth(weaponPickupMatrix(item), 0, 0, 0);
+  return true;
+};
+
+Item.renderWireFill = function (camera, item) {
+  const icon = POWERUP_ICONS[item.type];
+  if (icon) return Item.icon.renderWireFill(item, icon.glyph, icon.color);
+  if (!Item.pickupMd2) return false;
+  const spec = Item.pickupMd2[item.type];
+  if (!spec || !spec.model || !spec.model.frameBuffers || !spec.model.frameBuffers.length) return false;
+  if (!spec.model.ready()) return false;
+  const c = spec.color || [1, 1, 1, 1];
+  spec.model.renderWireFill(weaponPickupMatrix(item), 0, 0, 0, [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]);
   return true;
 };
 

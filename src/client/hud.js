@@ -1,8 +1,13 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { Shader } from '@engine/shader.js';
-import { WEAPON } from '@game/global.js';
-import { Console, assert } from '@game/polyfill.js';
+import { Event } from '@/core/event.js';
+import { Console, assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+import { isWireframe } from '@/engine/mesh.js';
+import { minimapRightEdge } from '@/engine/minimap-layout.js';
+import { uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc } from '@/engine/render_text.js';
+import { Shader } from '@/engine/shader.js';
+
+import { WEAPON } from '@/global.js';
 
 class Achievement {
   constructor(type, str, prior) {
@@ -15,17 +20,20 @@ class Achievement {
     this.render = function () {
       let alpha = (this.time - Date.now()) / 500;
       if (alpha > 2) alpha = 2;
+      const achHalf = uiSnapHalfNdc(0.035);
+      const achSize = uiTextSizeForHalfNdc(achHalf, 2, 0.035);
+      const achSizeBig = uiTextSizeForHalfNdc(achHalf, 2.5, 0.035);
 
       if (type === Achievement.KILL)
-        state.text.render([0, 0.35], 2, '#b' + str, 1, { center: true, alpha: alpha });
+        state.text.render([0, 0.35], achSize, '#b' + str, 1, { center: true, alpha: alpha });
       if (type === Achievement.DEAD)
-        state.text.render([0, 0.3], 2, '#w' + str, 1, { center: true, alpha: alpha });
+        state.text.render([0, 0.3], achSize, '#w' + str, 1, { center: true, alpha: alpha });
       if (type === Achievement.ACHIEV)
-        state.text.render([0, 0.2], 2, '#r' + str, 2, { center: true, alpha: alpha });
+        state.text.render([0, 0.2], achSize, '#r' + str, 2, { center: true, alpha: alpha });
       if (type === Achievement.ACHIEV_BIG)
-        state.text.render([0, 0.1], 2.5, '#r' + str, 2, { center: true, alpha: alpha });
+        state.text.render([0, 0.1], achSizeBig, '#r' + str, 2, { center: true, alpha: alpha });
       if (type === Achievement.DISACHIEV)
-        state.text.render([0, 0.2], 2, '#G' + str, 2, { center: true, alpha: alpha });
+        state.text.render([0, 0.2], achSize, '#G' + str, 2, { center: true, alpha: alpha });
     };
   }
 }
@@ -302,19 +310,8 @@ HUD.render = function (bot, table, playing) {
 
   function renderWeapons() {
     const aspect = state.canvas.width / state.canvas.height;
-    const screenH = state.canvas.height;
+    const wire = isWireframe();
     const ICON_TEX_PX = 64;
-
-    // Привязка HUD-размеров к целым пикселям — без «мыльного» субпиксельного масштаба.
-    function snapHalfNdc(halfNdc, texPx) {
-      const fullPx = halfNdc * screenH;
-      if (texPx) {
-        const scale = Math.max(1, Math.round(fullPx / texPx));
-        return (scale * texPx) / screenH;
-      }
-      const snappedPx = Math.max(2, Math.round(fullPx));
-      return snappedPx / screenH;
-    }
 
     state.gl.enable(state.gl.BLEND);
     state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
@@ -325,10 +322,12 @@ HUD.render = function (bot, table, playing) {
     const SLOT_X = 0.9;
     const SLOT_Y_TOP = 0.82;
     const SLOT_STEP = 0.2;
-    const FRAME_HH = snapHalfNdc(0.08);
+    const FRAME_HH = uiSnapHalfNdc(0.08);
     const FRAME_HW = (2.0 * FRAME_HH) / aspect;
-    const ICON_HH = snapHalfNdc(0.13, ICON_TEX_PX);
+    const ICON_HH = uiSnapHalfNdc(0.13, ICON_TEX_PX);
     const ICON_HW = ICON_HH / aspect;
+    const statHalf = uiSnapHalfNdc(1.0 / 12.0);
+    const statTextSize = uiTextSizeForHalfNdc(statHalf, 2, 1.0 / 12.0);
     for (let i = WEAPON.PISTOL; i <= WEAPON.ROCKET; i++) {
       let alpha = bot.patrons[i] / (1 << 5);
       if (alpha > 1) alpha = 1;
@@ -360,29 +359,33 @@ HUD.render = function (bot, table, playing) {
       HUD.shader_frame.vector(HUD.shader_frame.rotate90, [0, 0, 0, 0]);
       state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
 
-      // 2) Иконка оружия поверх рамки (текстура ствола, повёрнута на 90°).
-      HUD.shader_hud.use();
-      HUD.shader_hud.texture(HUD.shader_hud.tex, state.Weapon.skins[i].gun.getId(), 0);
-      HUD.shader_hud.vector(HUD.shader_hud.color, [1, 1, 1, owned ? 1.0 : 0.0]);
-      HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [
-        SLOT_X,
-        SLOT_Y_TOP - SLOT_STEP * i,
-        ICON_HW,
-        ICON_HH,
-      ]);
-      HUD.shader_hud.vector(HUD.shader_hud.rotate90, [1, 0, 0, 0]);
-      state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
+      // 2) Иконка оружия поверх рамки (в wire режиме — без текстур).
+      if (!wire) {
+        HUD.shader_hud.use();
+        HUD.shader_hud.texture(HUD.shader_hud.tex, state.Weapon.skins[i].gun.getId(), 0);
+        HUD.shader_hud.vector(HUD.shader_hud.color, [1, 1, 1, owned ? 1.0 : 0.0]);
+        HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [
+          SLOT_X,
+          SLOT_Y_TOP - SLOT_STEP * i,
+          ICON_HW,
+          ICON_HH,
+        ]);
+        HUD.shader_hud.vector(HUD.shader_hud.rotate90, [1, 0, 0, 0]);
+        state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
+      }
     }
 
     // Иконка здоровья + число — только в активной игре (не в спектаторе).
     if (playing) {
-      HUD.shader_hud.use();
-      HUD.shader_hud.texture(HUD.shader_hud.tex, state.Item.tex_powerup[0].getId(), 0);
-      HUD.shader_hud.vector(HUD.shader_hud.color, [2, 2, 2, 0.5]);
-      HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [-0.9, 0.9, 1.0 / 12.0 / aspect, 1.0 / 12.0]);
-      HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
-      state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
-      state.text.render([-0.85, 0.9], 2, ' ' + bot.life, 2);
+      if (!wire) {
+        HUD.shader_hud.use();
+        HUD.shader_hud.texture(HUD.shader_hud.tex, state.Item.tex_powerup[0].getId(), 0);
+        HUD.shader_hud.vector(HUD.shader_hud.color, [2, 2, 2, 0.5]);
+        HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [-0.9, 0.9, 1.0 / 12.0 / aspect, 1.0 / 12.0]);
+        HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
+        state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
+      }
+      state.text.render([-0.85, 0.9], statTextSize, ' ' + bot.life, 2);
     }
 
     state.gl.disable(state.gl.BLEND);
@@ -399,20 +402,23 @@ HUD.render = function (bot, table, playing) {
   renderBottomStats(bot, playing);
 
   function renderTableCentered() {
+    const rowHalf = uiSnapHalfNdc(0.0275);
+    const rowStep = uiLineStep(rowHalf);
+    const textSize = uiTextSizeForHalfNdc(rowHalf, 2, 0.0275);
     let Y = 0.28;
     table.forEach((row, index) => {
       let rank = '' + (index + 1) + ')';
       if (playing && index === bot.rank) rank += '>';
-      Y -= 0.055;
-      state.text.render([0, Y], 2, rank + '  ' + row.nick + '  #g' + row.scores, 1, {
+      Y -= rowStep;
+      state.text.render([0, Y], textSize, rank + '  ' + row.nick + '  #g' + row.scores, 1, {
         center: true,
       });
     });
     if (playing && bot.rank > 9) {
       let nick = state.gameClient.getNickById(bot.id);
       let rank = '' + (bot.rank + 1) + ')>';
-      Y -= 0.055;
-      state.text.render([0, Y], 2, rank + '  #y' + nick + '#w  #g' + bot.scores, 1, {
+      Y -= rowStep;
+      state.text.render([0, Y], textSize, rank + '  #y' + nick + '#w  #g' + bot.scores, 1, {
         center: true,
       });
     }
@@ -426,27 +432,27 @@ HUD.render = function (bot, table, playing) {
 function renderBottomStats(bot, playing) {
   const Y = -0.96;
   const aspect = state.canvas.width / state.canvas.height;
-  // Миникарта занимает ~0.3 NDC по высоте, по ширине — 0.3/aspect, центр в [-0.8, -0.7].
-  // Правый край миникарты + отступ:
-  const minimapRight = -0.8 + 0.3 / aspect;
-  let x = minimapRight + 0.08;
+  const statHalf = uiSnapHalfNdc(0.02);
+  const textSize = uiTextSizeForHalfNdc(statHalf, 2, 0.02);
+  const minimapRight = isWireframe() ? -0.95 : minimapRightEdge(aspect);
+  let x = minimapRight + 0.06;
   const fps = state.stats ? state.stats.fps : 0;
   const ping = state.gameClient && state.gameClient.getPing ? state.gameClient.getPing() : 0;
 
   if (playing) {
     const nick = state.gameClient.getNickById(bot.id);
-    state.text.render([x, Y], 2, nick, 1);
+    state.text.render([x, Y], textSize, nick, 1);
     x += 0.22;
-    state.text.render([x, Y], 2, 'frags: #g' + bot.frag, 1);
+    state.text.render([x, Y], textSize, 'frags: #g' + bot.frag, 1);
     x += 0.18;
-    state.text.render([x, Y], 2, 'scores: #g' + bot.scores, 1);
+    state.text.render([x, Y], textSize, 'scores: #g' + bot.scores, 1);
     x += 0.2;
-    state.text.render([x, Y], 2, 'rank: #g' + (bot.rank + 1), 1);
+    state.text.render([x, Y], textSize, 'rank: #g' + (bot.rank + 1), 1);
     x += 0.16;
   }
-  state.text.render([x, Y], 2, '#gFPS#w= ' + fps, 1);
+  state.text.render([x, Y], textSize, '#gFPS#w= ' + fps, 1);
   x += 0.16;
-  state.text.render([x, Y], 2, '#gPing#w= ' + ping, 1);
+  state.text.render([x, Y], textSize, '#gPing#w= ' + ping, 1);
 }
 
 function renderDamageVignette() {

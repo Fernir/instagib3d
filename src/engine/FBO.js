@@ -1,5 +1,7 @@
-import { state } from '@core/runtime-state.js';
-import { assert } from '@game/polyfill.js';
+import { assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+import { bindMainFramebuffer } from './framebuffer.js';
 
 class Framebuffer {
   constructor(width, height) {
@@ -34,9 +36,7 @@ class Framebuffer {
     };
     this.unbind = function () {
       assert(id);
-      let g = state.gl;
-      g.viewport(0, 0, state.canvas.width, state.canvas.height);
-      g.bindFramebuffer(g.FRAMEBUFFER, null);
+      bindMainFramebuffer();
     };
     this.getTexture = function () {
       return tex;

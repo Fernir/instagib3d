@@ -1,95 +1,127 @@
-import { state } from '@core/runtime-state.js';
-import { assert } from '@game/polyfill.js';
+import { assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+let activeProgram = null;
+const boundTextures = [];
+
+function stripLegacyPrecision(src) {
+  return src.replace(/#ifdef GL_ES[\s\S]*?#endif\s*\n?/g, '');
+}
+
+function hasGLSLVersion(src) {
+  return /^\s*#version\s+/m.test(src);
+}
+
+function upgradeToGLSL300(source, stage) {
+  if (hasGLSLVersion(source)) return source;
+  let s = stripLegacyPrecision(source);
+  s = s.replace(/\battribute\s+/g, 'in ');
+  if (stage === 'vert') {
+    s = s.replace(/\bvarying\s+/g, 'out ');
+  } else {
+    s = s.replace(/\bvarying\s+/g, 'in ');
+    if (!/\bout vec4 fragColor\b/.test(s)) {
+      s = 'out vec4 fragColor;\n' + s;
+    }
+    s = s.replace(/\bgl_FragColor\b/g, 'fragColor');
+    s = s.replace(/\btexture2D\s*\(/g, 'texture(');
+    s = s.replace(/\btextureCube\s*\(/g, 'texture(');
+  }
+  return '#version 300 es\nprecision highp float;\n' + s;
+}
+
+function bindProgram(prog) {
+  const gl = state.gl;
+  if (activeProgram !== prog) {
+    gl.useProgram(prog);
+    activeProgram = prog;
+  }
+}
 
 class Shader {
   constructor(vp, fp, names) {
     function compileShader(prog, type) {
-      let gl = state.gl;
-      let shader = gl.createShader(type);
-
+      const gl = state.gl;
+      const shader = gl.createShader(type);
       gl.shaderSource(shader, prog);
       gl.compileShader(shader);
-
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.log(prog);
         assert(false, gl.getShaderInfoLog(shader));
         return null;
       }
-
       return shader;
     }
 
-    let gl = state.gl;
-    let frag = compileShader(fp, gl.FRAGMENT_SHADER);
-    let vert = compileShader(vp, gl.VERTEX_SHADER);
+    const gl = state.gl;
+    const vertSrc = state.isWebGL2 ? upgradeToGLSL300(vp, 'vert') : vp;
+    const fragSrc = state.isWebGL2 ? upgradeToGLSL300(fp, 'frag') : fp;
+    const frag = compileShader(fragSrc, gl.FRAGMENT_SHADER);
+    const vert = compileShader(vertSrc, gl.VERTEX_SHADER);
     if (!frag || !vert) return null;
 
-    let prog = gl.createProgram();
-
+    const prog = gl.createProgram();
     gl.attachShader(prog, vert);
     gl.attachShader(prog, frag);
     gl.bindAttribLocation(prog, 0, 'position');
     gl.linkProgram(prog);
 
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      assert(false, 'could not initialise shaders');
+      assert(false, 'could not initialise shaders: ' + gl.getProgramInfoLog(prog));
       return null;
     }
 
+    this._prog = prog;
     if (names) {
-      let self = this;
+      const self = this;
       names.forEach(function (name) {
         self[name] = gl.getUniformLocation(prog, name);
       });
     }
 
     this.use = function () {
-      state.gl.useProgram(prog);
+      bindProgram(prog);
     };
     this.matrix = function (name, mat) {
-      let gl = state.gl;
-      let loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
+      const loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
       gl.uniformMatrix4fv(loc, false, mat);
     };
     this.texture = function (name, id, lev) {
-      let gl = state.gl;
-      let loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
+      const loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
       gl.uniform1i(loc, lev);
-      gl.activeTexture(gl.TEXTURE0 + lev);
-      gl.bindTexture(gl.TEXTURE_2D, id);
+      if (boundTextures[lev] !== id) {
+        gl.activeTexture(gl.TEXTURE0 + lev);
+        gl.bindTexture(gl.TEXTURE_2D, id);
+        boundTextures[lev] = id;
+      }
     };
     this.vector = function (name, vec) {
-      let gl = state.gl;
-      let loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
-      gl.uniform4f(loc, vec[0], vec[1], vec[2], vec[3]);
+      const loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
+      gl.uniform4f(loc, vec[0], vec[1], vec[2], vec[3] != null ? vec[3] : 0);
     };
     this.getLocation = function (name) {
-      return state.gl.getUniformLocation(prog, name);
+      return gl.getUniformLocation(prog, name);
     };
     this.attrib = function (name) {
-      return state.gl.getAttribLocation(prog, name);
+      return gl.getAttribLocation(prog, name);
+    };
+    this.program = function () {
+      return prog;
     };
   }
 }
 
 Shader.vertexShader = function (mat_pos, mat_tex, position) {
   let vert = 'attribute vec4 position;\n';
-
   if (mat_pos) vert += 'uniform mat4 mat_pos;\n';
   if (mat_tex) vert += 'uniform mat4 mat_tex;\n';
-  vert +=
-    'varying vec4 texcoord;\n\
-    \n\
-    void main()\n\
-    {\n';
+  vert += 'varying vec4 texcoord;\nvoid main()\n{\n';
   if (mat_pos) vert += 'gl_Position = mat_pos * position;\n';
   else vert += 'gl_Position = position;\n';
   if (mat_tex) vert += 'texcoord = mat_tex * position;\n';
   else vert += 'texcoord = position * 0.5 + 0.5;\n';
   if (position !== undefined) vert += 'texcoord.zw = ' + position + '.xy * 0.5 + 0.5;\n';
   vert += '}\n';
-
   return vert;
 };
 
-export { Shader };
+export { Shader, bindProgram, upgradeToGLSL300 };

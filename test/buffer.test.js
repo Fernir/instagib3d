@@ -1,4 +1,5 @@
-import { Buffer } from '@core/buffer.js';
+import { Buffer } from '@/core/buffer.js';
+
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 
 

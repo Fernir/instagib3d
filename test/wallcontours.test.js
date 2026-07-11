@@ -2,7 +2,9 @@ import {
   buildWallSegments,
   mergeWallSegments,
   splitLongWallSegments,
-} from '@client/wallcontours.js';
+  chainWallUStarts,
+} from '@/client/wallcontours.js';
+
 import { describe, it, expect } from 'vitest';
 
 
@@ -85,5 +87,23 @@ describe('splitLongWallSegments', () => {
     const out = splitLongWallSegments([seg], 2);
     expect(out.length).toBe(1);
     expect(out[0]).toBe(seg);
+  });
+
+  it('куски длинного сегмента получают непрерывный uOffset', () => {
+    const seg = { p0: [0, 0], p1: [5, 0], nx: 0, nz: -1, len: 5 };
+    const out = splitLongWallSegments([seg], 2);
+    expect(out[0].uOffset).toBe(0);
+    expect(out[1].uOffset).toBeCloseTo(2, 6);
+    expect(out[2].uOffset).toBeCloseTo(4, 6);
+  });
+});
+
+describe('chainWallUStarts', () => {
+  it('продолжает uOffset у двух коллинеарных сегментов', () => {
+    const a = { p0: [0, 0], p1: [2, 0], nx: 0, nz: -1, len: 2, uOffset: 0 };
+    const b = { p0: [2, 0], p1: [5, 0], nx: 0, nz: -1, len: 3, uOffset: 0 };
+    chainWallUStarts([a, b]);
+    expect(a.uOffset).toBe(0);
+    expect(b.uOffset).toBeCloseTo(2, 6);
   });
 });

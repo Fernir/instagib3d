@@ -1,6 +1,9 @@
-import { Weapon } from '@combat/weapon.js';
-import { Event } from '@core/event.js';
-import { WEAPON } from '@game/global.js';
+import { Event } from '@/core/event.js';
+
+import { WEAPON } from '@/global.js';
+
+import { Weapon } from '@/sim/weapon.js';
+
 import { describe, it, expect } from 'vitest';
 
 

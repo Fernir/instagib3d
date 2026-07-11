@@ -1,11 +1,15 @@
-import { bulletKnockbackDir, eventKnockbackMag } from '@combat/event.js';
-import { Vector } from '@core/vector.js';
-import { WEAPON } from '@game/global.js';
+import { Vector } from '@/core/vector.js';
+
+import { WEAPON } from '@/global.js';
+
+import { bulletKnockbackDir, eventKnockbackMag } from '@/sim/game-events.js';
+
 import {
   bridgeDominantInwardLocal,
   bridgeLavaEdgeInward,
   bridgeLocalPos,
-} from '@level/level.js';
+} from '@/sim/level.js';
+
 import { describe, expect, it } from 'vitest';
 
 describe('bulletKnockbackDir — направление отбрасывания', () => {

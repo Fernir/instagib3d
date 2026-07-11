@@ -1,4 +1,5 @@
-import { createGlobalMat4 } from '@core/mat4.js';
+import { createGlobalMat4 } from '@/core/mat4.js';
+
 import { describe, it, expect } from 'vitest';
 
 

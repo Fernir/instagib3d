@@ -1,7 +1,8 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { ITEM } from '@game/global.js';
-import { Console, assert } from '@game/polyfill.js';
+import { Event } from '@/core/event.js';
+import { Console, assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
+
+import { ITEM } from '@/global.js';
 
 // 3D positional audio: HRTF-панорама + линейное затухание по расстоянию.
 // Координаты Howler: +X вправо, +Y вверх, +Z к слушателю (forward = -Z).

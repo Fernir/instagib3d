@@ -1,7 +1,8 @@
-import { Event } from '@core/event.js';
-import { state } from '@core/runtime-state.js';
-import { Vector } from '@core/vector.js';
-import { WEAPON } from '@game/global.js';
+import { Event } from '@/core/event.js';
+import { state } from '@/core/runtime-state.js';
+import { Vector } from '@/core/vector.js';
+
+import { WEAPON } from '@/global.js';
 
 // Событийная обвязка декалей. Сам рендер реализован level3d.js (decalAdapter):
 // здесь мы лишь маршрутизируем игровые события в его render_decal.

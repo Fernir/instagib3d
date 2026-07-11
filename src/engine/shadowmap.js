@@ -1,5 +1,8 @@
-import { state } from '@core/runtime-state.js';
+import { state } from '@/core/runtime-state.js';
 
+import { bindMainFramebuffer } from './framebuffer.js';
+
+import { uploadDepthTexture } from './glcontext.js';
 import { Shader } from './shader.js';
 
 // Карта теней от «солнца»: глубина сцены рендерится из ортографической камеры,
@@ -32,22 +35,18 @@ function normalize3(v) {
 
 export class ShadowMap {
   constructor(resolution = 2048) {
-    const gl = state.gl;
-    this.ext =
-      gl.getExtension('WEBGL_depth_texture') ||
-      gl.getExtension('WEBKIT_WEBGL_depth_texture') ||
-      gl.getExtension('MOZ_WEBGL_depth_texture');
+    this.depthTexSupported = !!state.depthTexture;
     this.res = resolution;
     this.fbo = null;
     this.colorTex = null;
     this.depthTex = null;
     this.lightVP = null;
-    this.shader = this.ext ? new Shader(VERT, FRAG, ['u_mvp']) : null;
-    this.ok = !!this.ext;
+    this.shader = this.depthTexSupported ? new Shader(VERT, FRAG, ['u_mvp']) : null;
+    this.ok = this.depthTexSupported;
   }
 
   ensure() {
-    if (!this.ext) return false;
+    if (!this.depthTexSupported) return false;
     if (this.fbo) return true;
     const gl = state.gl;
     const r = this.res;
@@ -59,17 +58,7 @@ export class ShadowMap {
 
     this.depthTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.DEPTH_COMPONENT,
-      r,
-      r,
-      0,
-      gl.DEPTH_COMPONENT,
-      gl.UNSIGNED_SHORT,
-      null,
-    );
+    uploadDepthTexture(gl, r, r);
     setNearestClamp(gl);
 
     this.fbo = gl.createFramebuffer();
@@ -134,9 +123,7 @@ export class ShadowMap {
     gl.depthFunc(gl.LEQUAL);
     gl.disable(gl.BLEND);
     gl.enable(gl.POLYGON_OFFSET_FILL);
-    // Сильнее отодвигаем глубину кастеров от поверхности: гасит самозатенение
-    // стен (вертикальных граней под скользящим углом к солнцу).
-    gl.polygonOffset(2.5, 4.0);
+    gl.polygonOffset(1.2, 2.5);
 
     this.shader.use();
     return vp;
@@ -177,8 +164,7 @@ export class ShadowMap {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, state.canvas.width, state.canvas.height);
+    bindMainFramebuffer();
   }
 
   texture() {

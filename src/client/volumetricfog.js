@@ -1,7 +1,9 @@
-import { state } from '@core/runtime-state.js';
-import { DepthTarget } from '@engine/depthtarget.js';
-import { GLSL } from '@engine/glsl.js';
-import { Shader } from '@engine/shader.js';
+import { state } from '@/core/runtime-state.js';
+
+import { DepthTarget } from '@/engine/depthtarget.js';
+import { bindMainFramebuffer } from '@/engine/framebuffer.js';
+import { GLSL } from '@/engine/glsl.js';
+import { Shader } from '@/engine/shader.js';
 
 
 // Объёмный туман: набор camera-facing слайсов с 3D fbm-шумом. Слайсы расставлены
@@ -224,8 +226,7 @@ export class VolumetricFog {
       gl.disable(gl.DEPTH_TEST);
       this.drawSlices(fogCam, inv, t);
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, state.canvas.width, state.canvas.height);
+      bindMainFramebuffer();
       this.blit.use();
       this.blit.texture(this.blit.tex_fog, this.fogColorTex, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);

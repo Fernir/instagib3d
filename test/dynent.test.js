@@ -1,5 +1,7 @@
-import { Vector } from '@core/vector.js';
-import { Dynent, cameraCulling } from '@entity/dynent.js';
+import { Vector } from '@/core/vector.js';
+
+import { Dynent, cameraCulling } from '@/sim/dynent.js';
+
 import { describe, it, expect } from 'vitest';
 
 

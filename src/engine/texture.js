@@ -1,5 +1,5 @@
-import { state } from '@core/runtime-state.js';
-import { Console, assert } from '@game/polyfill.js';
+import { Console, assert } from '@/core/polyfill.js';
+import { state } from '@/core/runtime-state.js';
 
 class Texture {
   constructor(img, param, callback) {

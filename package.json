@@ -26,8 +26,6 @@
     "earcut": "^3.1.1",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-import-resolver-node": "^0.4.0",
-    "eslint-plugin-import": "^2.29.0",
     "eslint-plugin-sonarjs": "^4.0.3",
     "globals": "^15.0.0",
     "opentype.js": "^2.0.0",

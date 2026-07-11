@@ -1,6 +1,9 @@
-import { Vector } from '@core/vector.js';
-import { Item } from '@entity/item.js';
-import { WEAPON, ITEM } from '@game/global.js';
+import { Vector } from '@/core/vector.js';
+
+import { WEAPON, ITEM } from '@/global.js';
+
+import { Item } from '@/sim/item.js';
+
 import { describe, it, expect } from 'vitest';
 
 

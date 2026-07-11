@@ -1,11 +1,14 @@
-import { Event } from '@core/event.js';
-import { state, getMouseAngle, getMousePitch } from '@core/runtime-state.js';
-import { Vector } from '@core/vector.js';
-import { Shader } from '@engine/shader.js';
-import { Bot } from '@entity/bot.js';
-import { Dynent } from '@entity/dynent.js';
-import { ITEM, WEAPON } from '@game/global.js';
-import { Console, config, assert } from '@game/polyfill.js';
+import { Event } from '@/core/event.js';
+import { Console, config, assert } from '@/core/polyfill.js';
+import { state, getMouseAngle, getMousePitch } from '@/core/runtime-state.js';
+import { Vector } from '@/core/vector.js';
+
+import { Shader } from '@/engine/shader.js';
+
+import { ITEM, WEAPON } from '@/global.js';
+
+import { Bot } from '@/sim/bot.js';
+import { Dynent } from '@/sim/dynent.js';
 
 import { MD2Model } from './md2.js';
 import { Sound } from './sound.js';
@@ -237,6 +240,11 @@ function botWireColor(bot) {
   return [0.85, 0.95, 1.0, 1];
 }
 
+function botWireFillColor(bot) {
+  const c = botWireColor(bot);
+  return [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55];
+}
+
 function renderBotWirePhase(camera, bot, spec, phase, spawnAlpha, spawnScale) {
   const pose = botPose(bot, spec);
   if (!pose) return false;
@@ -253,6 +261,21 @@ function renderBotWirePhase(camera, bot, spec, phase, spawnAlpha, spawnScale) {
         const wia = Math.max(0, Math.min(last, pose.fa | 0));
         const wib = Math.max(0, Math.min(last, pose.fb | 0));
         wSpec.model.renderWireDepth(m, wia, wib, pose.lerp);
+      }
+    }
+    return true;
+  }
+
+  if (phase === 'fill') {
+    const fillCol = botWireFillColor(bot);
+    pose.model.renderWireFill(m, pose.fa, pose.fb, pose.lerp, fillCol);
+    if (bot.alive && bot.weapon) {
+      const wSpec = getWeaponSpec(spec, bot.weapon.type);
+      if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
+        const last = wSpec.model.frameBuffers.length - 1;
+        const wia = Math.max(0, Math.min(last, pose.fa | 0));
+        const wib = Math.max(0, Math.min(last, pose.fb | 0));
+        wSpec.model.renderWireFill(m, wia, wib, pose.lerp, [0.5, 0.52, 0.58]);
       }
     }
     return true;
@@ -367,6 +390,9 @@ function renderFirstPersonWeaponWire(camera, phase) {
   mat4.scale(m, m, [-VIEW_SCALE, VIEW_SCALE, VIEW_SCALE]);
   if (phase === 'depth') {
     wSpec.model.renderWireDepth(m, ia, ib, lerp, true);
+    return;
+  }
+  if (phase === 'fill') {
     return;
   }
   wSpec.model.renderWireDraw(m, ia, ib, lerp, [1.0, 1.0, 1.05, 1], true, true);
@@ -1104,6 +1130,25 @@ class BotClient {
       return;
     }
     renderBotWirePhase(camera, this, spec, 'depth', 1, 1);
+  }
+
+  renderWireFill(camera) {
+    if (this.dynent === camera) return;
+    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
+    if (this.spawnStartTime && !spawn.spawning) this.spawnStartTime = 0;
+    if (!this.alive) {
+      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
+      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
+    }
+    const spec = pickMD2Spec(this.id);
+    if (!spec || !spec.model.ready()) return;
+    if (spawn.spawning) {
+      if (spawn.alpha > 0.002) {
+        renderBotWirePhase(camera, this, spec, 'fill', spawn.alpha, spawn.scale);
+      }
+      return;
+    }
+    renderBotWirePhase(camera, this, spec, 'fill', 1, 1);
   }
 
   renderWireDraw(camera) {

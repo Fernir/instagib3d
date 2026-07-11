@@ -1,12 +1,16 @@
-import { Buffer } from '@core/buffer.js';
-import { state, getMousePitch } from '@core/runtime-state.js';
-import { Vector } from '@core/vector.js';
-import { Framebuffer } from '@engine/FBO.js';
-import { GLSL } from '@engine/glsl.js';
-import { MeshBuilder, isWireframe } from '@engine/mesh.js';
-import { Shader } from '@engine/shader.js';
-import { ShadowMap } from '@engine/shadowmap.js';
-import { Texture } from '@engine/texture.js';
+import { Buffer } from '@/core/buffer.js';
+import { state, getMousePitch } from '@/core/runtime-state.js';
+import { Vector } from '@/core/vector.js';
+
+import { Framebuffer } from '@/engine/FBO.js';
+import { bindMainFramebuffer } from '@/engine/framebuffer.js';
+import { GLSL } from '@/engine/glsl.js';
+import { MeshBuilder, drawLevelMeshesDepth, isWireframe, setWireFillStyle } from '@/engine/mesh.js';
+import { MINIMAP_RADIUS, minimapCenter } from '@/engine/minimap-layout.js';
+import { getMobileJoyVisual, isMobileControls } from '@/engine/mobilecontrols.js';
+import { Shader } from '@/engine/shader.js';
+import { ShadowMap } from '@/engine/shadowmap.js';
+import { Texture } from '@/engine/texture.js';
 
 
 import { LavaFlow } from './lavaflow.js';
@@ -17,6 +21,7 @@ import {
   buildWallSegments,
   mergeWallSegments,
   splitLongWallSegments,
+  chainWallUStarts,
 } from './wallcontours.js';
 
 class LevelRender3D {
@@ -150,17 +155,28 @@ class LevelRender3D {
       { wrap: gl.CLAMP_TO_EDGE },
     );
 
-    // Миникарта: отдельная 256² текстура из «сырых» тайлов (nearest upscale),
-    // иначе на маленьких картах (64²) levelmap размазывается в LINEAR.
+    // Миникарта: 256², bilinear upscale + LINEAR-сэмплинг для гладких контуров.
     const MINIMAP_TEX_SIZE = 256;
     function buildMinimapChannel(outSize, src, mapFn) {
       const buf = new Buffer(outSize);
       const srcSize = src.getSize();
       for (let j = 0; j < outSize; j++) {
         for (let i = 0; i < outSize; i++) {
-          const sx = Math.min(srcSize - 1, ((i * srcSize) / outSize) | 0);
-          const sy = Math.min(srcSize - 1, ((j * srcSize) / outSize) | 0);
-          buf.setData(i + j * outSize, mapFn(src.getData(sx, sy)));
+          const fx = ((i + 0.5) * srcSize) / outSize - 0.5;
+          const fy = ((j + 0.5) * srcSize) / outSize - 0.5;
+          const x0 = Math.max(0, Math.min(srcSize - 1, Math.floor(fx)));
+          const y0 = Math.max(0, Math.min(srcSize - 1, Math.floor(fy)));
+          const x1 = Math.min(srcSize - 1, x0 + 1);
+          const y1 = Math.min(srcSize - 1, y0 + 1);
+          const tx = fx - x0;
+          const ty = fy - y0;
+          const v00 = mapFn(src.getData(x0, y0));
+          const v10 = mapFn(src.getData(x1, y0));
+          const v01 = mapFn(src.getData(x0, y1));
+          const v11 = mapFn(src.getData(x1, y1));
+          const v =
+            v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) + v01 * (1 - tx) * ty + v11 * tx * ty;
+          buf.setData(i + j * outSize, v);
         }
       }
       return buf;
@@ -174,7 +190,7 @@ class LevelRender3D {
       minimapFloor,
       minimapFloor,
       minimapFloor,
-      { wrap: gl.CLAMP_TO_EDGE, filter: gl.NEAREST },
+      { wrap: gl.CLAMP_TO_EDGE, filter: gl.LINEAR },
     );
 
     // Поле скоростей реки/лавы — задаёт направление течения по позиции (RG = vx, vy).
@@ -293,20 +309,23 @@ class LevelRender3D {
         return lighting + vec3(1.0, 0.96, 0.86) * sun_dir.w * ndl * sh;
     }
 
-    // Стены: у пола сэмплим без normal-offset (щель под плинтусом), выше — со сдвигом.
+    // Стены: normal-offset выше пола; у основания — та же тень, что у пола (без щели).
     vec3 apply_sun_wall(vec3 lighting, vec3 wp, vec3 n, float height)
     {
         vec3 nn = normalize(n);
         float ndl = dot(nn, -normalize(sun_dir.xyz));
         ndl = max(ndl, 0.0) * 0.55 + 0.45;
-        float heightScale = smoothstep(0.0, 0.5, height);
-        float off = shadow_params.y * (1.0 + (1.0 - ndl) * 3.0) * heightScale;
+        float heightScale = smoothstep(0.12, 0.55, height);
+        float off = shadow_params.y * (1.0 + (1.0 - ndl)  * 3.0) * heightScale;
         float shBase = sun_shadow(wp);
         float shOff = sun_shadow(wp + nn * off);
         float sh = mix(shBase, min(shBase, shOff), heightScale);
+        if (height < 0.35) {
+            float floorSh = sun_shadow(vec3(wp.x, 0.0, wp.z));
+            sh = min(sh, mix(floorSh, sh, smoothstep(0.0, 0.35, height)));
+        }
         vec3 sun = vec3(1.0, 0.96, 0.86) * sun_dir.w * ndl * sh;
-        float contact = mix(0.35, 1.0, smoothstep(0.0, 0.55, height));
-        return (lighting + sun) * contact;
+        return lighting + sun;
     }`;
 
     const frag_floor = `
@@ -418,7 +437,7 @@ class LevelRender3D {
         vec2 uv_level = vec2(v_world.x * scale_world.x, 1.0 - v_world.y * scale_world.x);
 
         float h_attn = smoothstep(0.0, 0.7, v_height) - smoothstep(3.6, 4.0, v_height);
-        h_attn = clamp(h_attn * 1.05, 0.45, 1.0);
+        h_attn = clamp(h_attn, 0.0, 1.0);
 
         vec3 lighting = vec3(${AMBIENT_BASE.toFixed(2)});
         float lmStep = lightmap_params.x;
@@ -534,12 +553,16 @@ class LevelRender3D {
     uniform vec4 pos;
     uniform vec4 player_angle;
     uniform vec4 time;
+    uniform vec4 joy_ui;
 
     void main(void)
     {
         vec2 p = texcoord.xy * 2.0 - 1.0;
         float r = length(p);
         if (r > 1.0) discard;
+
+        bool joy_active = joy_ui.x > 0.001;
+        float joy_fade = joy_ui.x;
 
         // Вращаем сэмпл вокруг позиции игрока: центр круга = игрок, вверх = взгляд.
         float ca = cos(player_angle.x);
@@ -550,13 +573,17 @@ class LevelRender3D {
         vec2 player_uv = pos.xy + 0.5;
         vec2 sample_uv = player_uv + rot * 0.5;
 
-        // Отсекаем всё, что за пределами уровня — иначе CLAMP_TO_EDGE
-        // протягивает краевые пиксели (часто лаву) наружу.
-        vec2 inside = step(vec2(0.0), sample_uv) * step(sample_uv, vec2(1.0));
-        float inside_mask = inside.x * inside.y;
+        // CLAMP + мягкая маска у края уровня — без протягивания лавы/пола наружу.
+        float edge = 0.012;
+        float inside_mask =
+            smoothstep(0.0, edge, sample_uv.x) *
+            smoothstep(0.0, edge, sample_uv.y) *
+            smoothstep(0.0, edge, 1.0 - sample_uv.x) *
+            smoothstep(0.0, edge, 1.0 - sample_uv.y);
 
-        vec4 level = texture2D(levelmap, sample_uv);
-        level = clamp((level * 2.0 - 1.0), 0.0, 1.0);
+        vec4 level = texture2D(levelmap, clamp(sample_uv, 0.0, 1.0));
+        level.g = smoothstep(0.28, 0.72, level.g);
+        level.r = smoothstep(0.28, 0.72, level.r);
         level.rg *= inside_mask;
 
         // Маски: внутри карты, на рамке, и плавный край.
@@ -586,8 +613,22 @@ class LevelRender3D {
         map_col = mix(map_col, vec3(1.0, 0.25, 0.2), dot_glow);
         map_alpha = max(map_alpha, dot_glow);
 
-        vec3 col = mix(vec3(1.0), map_col, map_mask);
-        float alpha = mix(border_mask * 0.7, map_alpha, map_mask);
+        vec3 border_col = mix(vec3(1.0), vec3(1.0, 0.92, 0.72), joy_fade);
+        float border_alpha = border_mask * mix(0.7, 1.0, joy_fade);
+
+        vec3 col = mix(border_col, map_col, map_mask);
+        float alpha = mix(border_alpha, map_alpha, map_mask);
+
+        if (joy_active) {
+            vec2 thumb = joy_ui.yz;
+            float thumb_dist = length(p - thumb);
+            float thumb_fill = smoothstep(0.19, 0.10, thumb_dist);
+            float thumb_ring = smoothstep(0.23, 0.19, thumb_dist) * (1.0 - smoothstep(0.12, 0.10, thumb_dist));
+            col = mix(col, vec3(1.0, 0.82, 0.28), thumb_fill * 0.92 * joy_fade);
+            alpha = max(alpha, thumb_fill * 0.95 * joy_fade);
+            col = mix(col, vec3(1.0, 0.96, 0.82), thumb_ring * 0.75 * joy_fade);
+            alpha = max(alpha, thumb_ring * 0.55 * joy_fade);
+        }
 
         gl_FragColor = vec4(col, alpha);
     }`;
@@ -657,6 +698,7 @@ class LevelRender3D {
       'pos',
       'player_angle',
       'time',
+      'joy_ui',
     ]);
 
     // Объёмный туман вынесен в VolumetricFog (camera-facing слайсы с 3D fbm-шумом
@@ -678,10 +720,9 @@ class LevelRender3D {
     // Радиус (полусторона) сфокусированной на игроке теневой области в мире.
     const SHADOW_RADIUS = 18;
     const SUN_INTENSITY = 0.5;
-    const SHADOW_BIAS = 0.0022;
+    const SHADOW_BIAS = 0.0015;
     // Базовый сдвиг точки сэмпла вдоль нормали (метры) против self-shadow acne.
-    // Стены вертикальны и под скользящим углом к солнцу — нужен заметный сдвиг.
-    const SHADOW_NORMAL_OFFSET = 0.16;
+    const SHADOW_NORMAL_OFFSET = 0.12;
     let shadowVP = null;
 
     // --- Стенные декали: привязка к сегментам marching squares (как makeWallMesh) ---
@@ -898,6 +939,15 @@ class LevelRender3D {
 
         const y0 = wall_base;
         const y1 = wall_height;
+        const uBase = seg.uOffset || 0;
+        const arcLen = new Float32Array(nu + 1);
+        arcLen[0] = 0;
+        for (let ci = 1; ci <= nu; ci++) {
+          arcLen[ci] =
+            arcLen[ci - 1] +
+            Math.hypot(cols[ci][0] - cols[ci - 1][0], cols[ci][1] - cols[ci - 1][1]);
+        }
+        const arcTotal = arcLen[nu] > 1e-6 ? arcLen[nu] : segLen;
         for (let i = 0; i < nu; i++) {
           const A = cols[i];
           const B = cols[i + 1];
@@ -905,10 +955,10 @@ class LevelRender3D {
             az = A[1];
           const bx = B[0],
             bz = B[1];
-          const su0 = (segLen * i) / nu,
-            su1 = (segLen * (i + 1)) / nu;
-          const au0 = r ? iu0 + (su0 / segLen) * (iu1 - iu0) : 0;
-          const au1 = r ? iu0 + (su1 / segLen) * (iu1 - iu0) : 0;
+          const su0 = uBase + arcLen[i];
+          const su1 = uBase + arcLen[i + 1];
+          const au0 = r ? iu0 + (arcLen[i] / arcTotal) * (iu1 - iu0) : 0;
+          const au1 = r ? iu0 + (arcLen[i + 1] / arcTotal) * (iu1 - iu0) : 0;
           const av0 = r ? iv0 + (y0 / wall_height) * (iv1 - iv0) : 0;
           const av1 = r ? iv0 + (y1 / wall_height) * (iv1 - iv0) : 0;
 
@@ -1086,6 +1136,7 @@ class LevelRender3D {
         mergeWallSegments(buildWallSegments(groundMap, mapCells, mapScale)),
         maxTileLen,
       );
+      chainWallUStarts(segs);
       wall_segments.length = 0;
       for (let i = 0; i < segs.length; i++) wall_segments.push(segs[i]);
       decals.packWallAtlas();
@@ -1352,14 +1403,18 @@ class LevelRender3D {
       // Глубина сцены в отдельный FBO — для soft-particles объёмного тумана.
       fog.prepass(state.viewProj3D, [floor_mesh, wall_mesh, ceiling_mesh, bridges_mesh]);
 
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, state.canvas.width, state.canvas.height);
+      bindMainFramebuffer();
       gl.clearColor(0.08, 0.1, 0.13, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
       gl.depthFunc(gl.LEQUAL);
       gl.disable(gl.BLEND);
+
+      if (isWireframe()) {
+        drawLevelMeshesDepth([wall_mesh, floor_mesh, ceiling_mesh, bridges_mesh], { noCull: true });
+        return;
+      }
 
       const view_proj = state.viewProj3D;
       const detail_scale = (10 * size) / 64 / size;
@@ -1390,8 +1445,7 @@ class LevelRender3D {
       applyShadow(shader_floor, 9);
       lighting.apply(lights_loc_floor);
       floor_mesh.bind(meshLocs);
-      if (isWireframe()) floor_mesh.drawDepthPrepass();
-      else floor_mesh.draw();
+      if (!isWireframe()) floor_mesh.draw();
 
       shader_wall.use();
       shader_wall.matrix(shader_wall.view_proj, view_proj);
@@ -1405,8 +1459,7 @@ class LevelRender3D {
       applyShadow(shader_wall, 4);
       lighting.apply(lights_loc_wall);
       wall_mesh.bind(meshLocs);
-      if (isWireframe()) wall_mesh.drawDepthPrepass();
-      else wall_mesh.draw();
+      if (!isWireframe()) wall_mesh.draw();
 
       shader_ceiling.use();
       shader_ceiling.matrix(shader_ceiling.view_proj, view_proj);
@@ -1417,8 +1470,7 @@ class LevelRender3D {
       shader_ceiling.texture(shader_ceiling.tex_visible, visible_tex, 2);
       lighting.apply(lights_loc_ceiling);
       ceiling_mesh.bind(meshLocs);
-      if (isWireframe()) ceiling_mesh.drawDepthPrepass();
-      else ceiling_mesh.draw();
+      if (!isWireframe()) ceiling_mesh.draw();
 
       if (bridges_mesh.count > 0) {
         shader_bridge.use();
@@ -1432,12 +1484,36 @@ class LevelRender3D {
         applyShadow(shader_bridge, 4);
         lighting.apply(lights_loc_bridge);
         bridges_mesh.bind(meshLocs);
-        if (isWireframe()) bridges_mesh.drawDepthPrepass();
-        else bridges_mesh.draw();
+        if (!isWireframe()) bridges_mesh.draw();
       }
 
       wall_mesh.unbind(meshLocs);
       ceiling_mesh.unbind(meshLocs);
+    };
+    this.drawLevelWireDepth = function () {
+      if (!this.ready() || !isWireframe()) return;
+      drawLevelMeshesDepth([wall_mesh, floor_mesh, ceiling_mesh, bridges_mesh], { noCull: true });
+    };
+    this.drawLevelWireFill = function () {
+      if (!this.ready() || !isWireframe()) return;
+      const sun = this.sunDir || [0.4, -0.8, 0.35];
+      const depthInfo = this.getSceneDepthInfo();
+      const fillDepth = depthInfo.ready ? { sceneDepth: depthInfo } : null;
+      setWireFillStyle([0.2, 0.22, 0.26], sun);
+      wall_mesh.bind(meshLocs);
+      wall_mesh.drawWireFill(fillDepth);
+      setWireFillStyle([0.14, 0.17, 0.13], sun);
+      floor_mesh.bind(meshLocs);
+      floor_mesh.drawWireFill(fillDepth);
+      setWireFillStyle([0.12, 0.14, 0.17], sun);
+      ceiling_mesh.bind(meshLocs);
+      ceiling_mesh.drawWireFill(fillDepth);
+      if (bridges_mesh.count > 0) {
+        setWireFillStyle([0.18, 0.2, 0.22], sun);
+        bridges_mesh.bind(meshLocs);
+        bridges_mesh.drawWireFill(fillDepth);
+      }
+      floor_mesh.unbind(meshLocs);
     };
     this.drawLevelWire = function () {
       if (!this.ready() || !isWireframe()) return;
@@ -1464,20 +1540,23 @@ class LevelRender3D {
       const mat4 = state.mat4;
       const pos = calc_minimap_position(camera);
       const aspect = state.canvas.width / state.canvas.height;
-      const radius = 0.3;
+      const center = minimapCenter(aspect);
+      const radius = MINIMAP_RADIUS;
 
       gl.enable(gl.BLEND);
       const mat_pos = mat4.create();
-      mat4.trans(mat_pos, [-0.8, -0.7, 0]);
-      mat4.scal(mat_pos, [radius / aspect, radius, 1]);
+      mat4.trans(mat_pos, [center.x, center.y, 0]);
+      mat4.scal(mat_pos, [center.radiusX, center.radiusY, 1]);
 
       const t = Date.now() * 0.001;
+      const joy = isMobileControls() ? getMobileJoyVisual() : { fade: 0, thumbX: 0, thumbY: 0 };
       shader_minimap.use();
       shader_minimap.matrix(shader_minimap.mat_pos, mat_pos);
       shader_minimap.texture(shader_minimap.levelmap, minimapTex.getId(), 0);
       shader_minimap.vector(shader_minimap.pos, [pos.x, pos.y, 0, 0]);
       shader_minimap.vector(shader_minimap.player_angle, [camera.angle || 0, 0, 0, 0]);
       shader_minimap.vector(shader_minimap.time, [t, 0, 0, 0]);
+      shader_minimap.vector(shader_minimap.joy_ui, [joy.fade, joy.thumbX, joy.thumbY, 0]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.disable(gl.BLEND);
     };
