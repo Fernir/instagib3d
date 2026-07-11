@@ -100,7 +100,9 @@ export class VolumetricFog {
   constructor(size) {
     const gl = state.gl;
     this.size = size;
+    this.enabled = true;
     this.SLICES = 8;
+    this.resShift = 2;
     this.NEAR = 1.5;
     this.FAR = 28.0;
 
@@ -132,6 +134,21 @@ export class VolumetricFog {
     this.fogH = 0;
   }
 
+  setEnabled(value) {
+    this.enabled = !!value;
+  }
+
+  setSlices(n) {
+    this.SLICES = Math.max(0, n | 0);
+  }
+
+  setResShift(shift) {
+    const s = Math.max(1, Math.min(4, shift | 0));
+    if (s === this.resShift) return;
+    this.resShift = s;
+    this.fogFBO = null;
+  }
+
   // Глубина сцены для soft-particles/фаербола (Q2FX). near/far совпадают с
   // линеаризацией в шейдере (screen_p.zw).
   depthInfo() {
@@ -140,14 +157,16 @@ export class VolumetricFog {
 
   // Depth-prepass непрозрачной геометрии — в начале кадра, до основного рендера.
   prepass(view_proj, meshes) {
+    if (!this.enabled || state.quality?.depthPrepass === false) return;
     this.depth.prepass(view_proj, meshes);
   }
 
   // Цветовой буфер тумана 1/4 разрешения (premultiplied alpha).
   ensureFogFBO() {
     const gl = state.gl;
-    const w = Math.max(1, state.canvas.width >> 2);
-    const h = Math.max(1, state.canvas.height >> 2);
+    const shift = this.resShift || 2;
+    const w = Math.max(1, state.canvas.width >> shift);
+    const h = Math.max(1, state.canvas.height >> shift);
     if (this.fogFBO && w === this.fogW && h === this.fogH) return;
     if (this.fogFBO) {
       gl.deleteFramebuffer(this.fogFBO);
@@ -195,6 +214,7 @@ export class VolumetricFog {
   }
 
   render(view_proj, fogCam) {
+    if (!this.enabled || this.SLICES <= 0) return;
     const gl = state.gl;
     const cullWas = gl.isEnabled(gl.CULL_FACE);
     const blendWas = gl.isEnabled(gl.BLEND);

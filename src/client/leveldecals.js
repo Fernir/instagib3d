@@ -145,7 +145,12 @@ export class LevelDecals {
   }
 
   packWallAtlas() {
-    const atlasSizes = [2048, 4096];
+    const gl = state.gl;
+    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
+    const atlasSizes = [2048, 4096, 1024].filter(function (s) {
+      return s <= maxTex;
+    });
+    if (atlasSizes.length === 0) atlasSizes.push(Math.min(512, maxTex));
     let packed = false;
     const tryPack = (res, ppu) => {
       const placements = [];
@@ -197,12 +202,15 @@ export class LevelDecals {
       }
     }
     if (!packed) {
-      const placements = tryPack(4096, WALL_PPU_MIN) || [];
+      const fallbackRes = atlasSizes[0] || Math.min(1024, maxTex);
+      const placements = tryPack(fallbackRes, WALL_PPU_MIN) || [];
       Console.info('wall decal atlas: fallback pack at minimum PPU');
-      applyPlacements(placements, 4096, WALL_PPU_MIN);
+      applyPlacements(placements, fallbackRes, WALL_PPU_MIN);
     }
 
-    const gl = state.gl;
+    if (this.wallAtlasRes > maxTex) {
+      this.wallAtlasRes = maxTex;
+    }
     this.wallFbo = new Framebuffer(this.wallAtlasRes, this.wallAtlasRes);
     this.wallFbo.bind();
     gl.clearColor(0, 0, 0, 0);

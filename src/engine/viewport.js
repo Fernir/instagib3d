@@ -1,3 +1,13 @@
+import { state } from '@/core/runtime-state.js';
+
+/** Effective DPR cap for render resolution (quality presets may limit this). */
+export function effectiveDevicePixelRatio() {
+  const raw = window.devicePixelRatio || 1;
+  const cap = state.quality?.dprMax;
+  if (cap == null) return raw;
+  return Math.min(raw, cap);
+}
+
 /** CSS layout size — matches 100dvw × 100dvh (visualViewport when available). */
 export function viewportCssSize() {
   if (typeof window === 'undefined') return { w: 800, h: 600 };
@@ -9,7 +19,7 @@ export function viewportCssSize() {
 }
 
 export function resizeGameCanvas(canvas, gl) {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = effectiveDevicePixelRatio();
   const { w, h } = viewportCssSize();
   const pw = Math.max(1, Math.round(w * dpr));
   const ph = Math.max(1, Math.round(h * dpr));

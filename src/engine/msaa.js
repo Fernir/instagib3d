@@ -1,6 +1,6 @@
 import { state } from '@/core/runtime-state.js';
 
-const SAMPLES = 4;
+const DEFAULT_SAMPLES = 4;
 
 export class MsaaTarget {
   constructor() {
@@ -14,8 +14,19 @@ export class MsaaTarget {
     this.enabled = false;
   }
 
+  samples() {
+    const n = state.quality?.msaaSamples;
+    if (n == null) return DEFAULT_SAMPLES;
+    return n <= 1 ? 0 : n;
+  }
+
   ensure() {
     if (!state.isWebGL2) return false;
+    const samples = this.samples();
+    if (samples <= 1) {
+      this.enabled = false;
+      return false;
+    }
     const gl = state.gl;
     const w = state.canvas.width;
     const h = state.canvas.height;
@@ -27,11 +38,11 @@ export class MsaaTarget {
 
     this.colorRb = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, this.colorRb);
-    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, SAMPLES, gl.RGBA8, w, h);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, w, h);
 
     this.depthRb = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRb);
-    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, SAMPLES, gl.DEPTH_COMPONENT24, w, h);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.DEPTH_COMPONENT24, w, h);
 
     this.msaaFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.msaaFbo);

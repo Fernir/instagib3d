@@ -533,7 +533,7 @@ class GameClient {
 
       // Карта теней от солнца: статика рисуется внутри, динамику (боты/предметы)
       // дорисовываем здесь в light-space перед основным проходом мира.
-      if (levelRender.renderShadows) {
+      if (levelRender.renderShadows && state.quality?.shadows !== false) {
         levelRender.renderShadows(mybot.dynent, function (lightVP) {
           framebots.forEach(function (bot) {
             bot.renderShadow(lightVP, mybot.dynent);

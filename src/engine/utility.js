@@ -5,7 +5,14 @@ import { Texture } from './texture.js';
 
 Buffer.loadImage = function (img, callback) {
   let image = new Image();
-  image.onload = function () {
+  image.onload = async function () {
+    if (typeof image.decode === 'function') {
+      try {
+        await image.decode();
+      } catch (_e) {
+        /* see Texture.js */
+      }
+    }
     assert(image.width === image.height);
     let size = image.width;
 

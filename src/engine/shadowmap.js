@@ -45,6 +45,25 @@ export class ShadowMap {
     this.ok = this.depthTexSupported;
   }
 
+  dispose() {
+    if (!state.gl) return;
+    const gl = state.gl;
+    if (this.fbo) gl.deleteFramebuffer(this.fbo);
+    if (this.colorTex) gl.deleteTexture(this.colorTex);
+    if (this.depthTex) gl.deleteTexture(this.depthTex);
+    this.fbo = null;
+    this.colorTex = null;
+    this.depthTex = null;
+  }
+
+  setResolution(res) {
+    const r = Math.max(256, res | 0);
+    if (r === this.res && this.fbo) return;
+    this.dispose();
+    this.res = r;
+    this.ok = this.depthTexSupported;
+  }
+
   ensure() {
     if (!this.depthTexSupported) return false;
     if (this.fbo) return true;

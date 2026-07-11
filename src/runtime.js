@@ -3,6 +3,7 @@ import { state, VK } from '@/core/runtime-state.js';
 
 import { initGL } from '@/engine/glcontext.js';
 import { initMobileControls, isMobileControls, mobileJoyAxis, tickMobileControls } from '@/engine/mobilecontrols.js';
+import { initQuality } from '@/engine/quality.js';
 import { bindViewportResize, resizeGameCanvas } from '@/engine/viewport.js';
 import { Howl, Howler } from 'howler';
 
@@ -316,6 +317,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     if (now > gSeconds) {
       gSeconds = now + 1000;
       stats.fps = gFrameCount;
+      if (state.qualityMgr) state.qualityMgr.tick(gFrameCount);
       gFrameCount = 0;
     }
   }
@@ -387,6 +389,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       bindVisibility();
       bindFirstGesture();
       Console.load();
+      initQuality(options);
       text = new Text();
       state.text = text;
 

@@ -716,7 +716,7 @@ class LevelRender3D {
 
     // Карта теней от солнца. Границы уровня: X/Z в [0, size], Y до высоты стены
     // плюс запас на персонажей/предметы.
-    const shadowMap = new ShadowMap(2048);
+    const shadowMap = new ShadowMap(state.quality?.shadowRes ?? 2048);
     // Радиус (полусторона) сфокусированной на игроке теневой области в мире.
     const SHADOW_RADIUS = 18;
     const SUN_INTENSITY = 0.5;
@@ -1326,11 +1326,21 @@ class LevelRender3D {
     this.getDecal = function () {
       return decals.adapter();
     };
+    let visInterval = state.quality?.visMapInterval ?? 4;
     let visFrame = 0;
+    this.applyQuality = function (settings) {
+      if (!settings) return;
+      visInterval = settings.visMapInterval || 4;
+      if (settings.shadowRes) shadowMap.setResolution(settings.shadowRes);
+      fog.setEnabled(settings.fog !== false);
+      fog.setSlices(settings.fogSlices ?? 8);
+      fog.setResShift(settings.fogResShift ?? 2);
+    };
+    if (state.quality) this.applyQuality(state.quality);
     this.beginFrame = function (camera) {
       state.viewProj3D = buildViewProjection(camera);
       visFrame++;
-      if (visFrame === 1 || visFrame % 4 === 0) {
+      if (visFrame === 1 || visFrame % visInterval === 0) {
         renderVisibleMap(camera);
         state.LevelRender.tex_visible_id = fbo_visible.getTexture();
       }
@@ -1343,7 +1353,7 @@ class LevelRender3D {
     // Проход карты теней: глубина статической геометрии + динамических кастеров
     // (боты, предметы) из light-space. drawCasters(lightVP) дорисовывает динамику.
     this.renderShadows = function (camera, drawCasters) {
-      if (!shadowMap.ok || !this.ready()) {
+      if (state.quality?.shadows === false || !shadowMap.ok || !this.ready()) {
         shadowVP = null;
         return;
       }
@@ -1368,6 +1378,7 @@ class LevelRender3D {
     if (state.LevelRender) {
       state.LevelRender.renderShadows = this.renderShadows;
       state.LevelRender.shadowDrawLocal = this.shadowDrawLocal;
+      state.LevelRender.applyQuality = this.applyQuality;
     }
 
     const applyShadow = (shader, unit) => {
