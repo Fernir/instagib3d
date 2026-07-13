@@ -2,8 +2,8 @@ import { Event } from '@/core/event.js';
 import { Console } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 
-import { isMobileControls } from '@/engine/mobilecontrols.js';
-import { uiTextSizeForHalfNdc } from '@/engine/render_text.js';
+import { MobileControls } from '@/engine/mobilecontrols.js';
+import { UILayout } from '@/engine/render_text.js';
 import { Shader } from '@/engine/shader.js';
 
 import { EVENT } from '@/global.js';
@@ -251,7 +251,7 @@ class GameClient {
       state.godNick = null;
       transport.addUser(nick, function () {
         transport.sendUserInputs();
-        if (!isMobileControls()) state.canvas.requestPointerLock?.();
+        if (!MobileControls.isActive()) state.canvas.requestPointerLock?.();
       });
       return true;
     };
@@ -366,7 +366,7 @@ class GameClient {
       // #r = красный (по умолчанию), #y = золотой при hover. Цвета в палитре
       // render_text.js — см. там же определение #y/#r.
       const label = hovered ? '#yPlay' : '#rPlay';
-      const textSize = uiTextSizeForHalfNdc(bh, 2.8, 0.085);
+      const textSize = UILayout.textSizeForHalfNdc(bh, 2.8, 0.085);
       state.text.render([0, PLAY_BTN_Y], textSize, label, 1, { center: true });
     };
     this.playButtonHitTest = function () {

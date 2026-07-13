@@ -324,15 +324,15 @@ function forEachSpawn(pass, drawFn) {
   }
 }
 
-const SpawnFx = {
-  shader_ring: null,
-  shader_pillar: null,
+export class SpawnFx {
+  static shader_ring = null;
+  static shader_pillar = null;
 
-  start(x, z) {
+  static start(x, z) {
     spawns.push({ x, z, t0: Date.now() });
-  },
+  }
 
-  botAppearance(spawnStartTime) {
+  static botAppearance(spawnStartTime) {
     if (!spawnStartTime) return { alpha: 1, scale: 1, spawning: false };
     const timing = spawnTiming(spawnStartTime);
     if (!timing) return { alpha: 1, scale: 1, spawning: false };
@@ -341,9 +341,9 @@ const SpawnFx = {
       scale: timing.botScale,
       spawning: true,
     };
-  },
+  }
 
-  renderAt(camera, x, z, spawnStartTime, pass = 'all') {
+  static renderAt(camera, x, z, spawnStartTime, pass = 'all') {
     if (!state.quadBuffer || !state.viewProj3D || !spawnStartTime) return false;
     const timing = spawnTiming(spawnStartTime);
     if (!timing) return false;
@@ -364,9 +364,9 @@ const SpawnFx = {
       });
     }
     return true;
-  },
+  }
 
-  render(camera, pass = 'all') {
+  static render(camera, pass = 'all') {
     if (!spawns.length || !state.quadBuffer || !state.viewProj3D) return;
     if (pass === 'floor' || pass === 'all') {
       withFloorBlend(function () {
@@ -378,11 +378,9 @@ const SpawnFx = {
         forEachSpawn(pass === 'all' ? 'pillar' : pass, drawSpawnEffect);
       });
     }
-  },
-};
+  }
+}
 
 Event.on('cl_botrespawn', function (pos) {
   if (pos) SpawnFx.start(pos.x, pos.y);
 });
-
-export { SpawnFx };

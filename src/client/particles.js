@@ -12,7 +12,7 @@ import { WEAPON, ITEM } from '@/global.js';
 import { Dynent } from '@/sim/dynent.js';
 
 //dir - Vector
-class Particle {
+export class Particle {
   constructor(type, pos, dir) {
     this.dynent = new Dynent(pos, [1, 1], Math.random() * Math.PI * 2);
     this.type = type;
@@ -392,4 +392,3 @@ Particle.render = function (camera, layer) {
 };
 
 state.Particle = Particle;
-export { Particle };

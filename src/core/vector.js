@@ -1,6 +1,6 @@
 import { Console } from './polyfill.js';
 
-class Vector {
+export class Vector {
   constructor(arg1, arg2) {
     if (arg1 instanceof Vector) {
       Console.assert(arg2 === undefined);
@@ -156,5 +156,3 @@ class Vector {
     return ret.interpolate(from, to, koef);
   }
 }
-
-export { Vector };

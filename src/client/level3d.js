@@ -3,11 +3,11 @@ import { state, getMousePitch } from '@/core/runtime-state.js';
 import { Vector } from '@/core/vector.js';
 
 import { Framebuffer } from '@/engine/FBO.js';
-import { bindMainFramebuffer } from '@/engine/framebuffer.js';
+import { MsaaTarget } from '@/engine/msaa.js';
 import { GLSL } from '@/engine/glsl.js';
 import { MeshBuilder } from '@/engine/mesh.js';
-import { MINIMAP_RADIUS, minimapCenter } from '@/engine/minimap-layout.js';
-import { getMobileJoyVisual, isMobileControls } from '@/engine/mobilecontrols.js';
+import { MinimapLayout } from '@/engine/minimap-layout.js';
+import { MobileControls } from '@/engine/mobilecontrols.js';
 import { Shader } from '@/engine/shader.js';
 import { ShadowMap } from '@/engine/shadowmap.js';
 import { Texture } from '@/engine/texture.js';
@@ -1424,7 +1424,7 @@ class LevelRender3D {
       // Глубина сцены в отдельный FBO — для soft-particles объёмного тумана.
       fog.prepass(state.viewProj3D, [floor_mesh, wall_mesh, ceiling_mesh, bridges_mesh]);
 
-      bindMainFramebuffer();
+      MsaaTarget.bindMain();
       gl.clearColor(0.08, 0.1, 0.13, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.enable(gl.DEPTH_TEST);
@@ -1528,8 +1528,8 @@ class LevelRender3D {
       const mat4 = state.mat4;
       const pos = calc_minimap_position(camera);
       const aspect = state.canvas.width / state.canvas.height;
-      const center = minimapCenter(aspect);
-      const radius = MINIMAP_RADIUS;
+      const center = MinimapLayout.center(aspect);
+      const radius = MinimapLayout.RADIUS;
 
       gl.enable(gl.BLEND);
       const mat_pos = mat4.create();
@@ -1537,7 +1537,7 @@ class LevelRender3D {
       mat4.scal(mat_pos, [center.radiusX, center.radiusY, 1]);
 
       const t = Date.now() * 0.001;
-      const joy = isMobileControls() ? getMobileJoyVisual() : { fade: 0, thumbX: 0, thumbY: 0 };
+      const joy = MobileControls.isActive() ? MobileControls.joyVisual() : { fade: 0, thumbX: 0, thumbY: 0 };
       shader_minimap.use();
       shader_minimap.matrix(shader_minimap.mat_pos, mat_pos);
       shader_minimap.texture(shader_minimap.levelmap, minimapTex.getId(), 0);

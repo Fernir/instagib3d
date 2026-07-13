@@ -1,18 +1,12 @@
 import { createGlobalMat4 } from '@/core/mat4.js';
 import { state, VK } from '@/core/runtime-state.js';
 
-import { initGL } from '@/engine/glcontext.js';
-import { initMobileControls, isMobileControls, mobileJoyAxis, tickMobileControls } from '@/engine/mobilecontrols.js';
-import { initMobileDisplay, releaseWakeLock, enterMobileImmersiveMode } from '@/engine/fullscreen.js';
+import { GLContext } from '@/engine/glcontext.js';
+import { MobileControls } from '@/engine/mobilecontrols.js';
+import { MobileDisplay } from '@/engine/fullscreen.js';
 import { initQuality } from '@/engine/quality.js';
-import {
-  buildLoadingChecks,
-  ensureLoadingOverlay,
-  getLoadingProgress,
-  hideLoadingOverlay,
-  updateLoadingOverlay,
-} from '@/engine/loading.js';
-import { bindViewportResize, resizeGameCanvas } from '@/engine/viewport.js';
+import { LoadingOverlay, loadingOverlay } from '@/engine/loading.js';
+import { Viewport } from '@/engine/viewport.js';
 import { Howl, Howler } from 'howler';
 
 import { getGameApi } from './api.js';
@@ -73,19 +67,19 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   VK.W = () =>
     input.keys['W'.charCodeAt(0)] ||
     input.keys[0x26] ||
-    (mobileJoyAxis().y < -0.22);
+    (MobileControls.joyAxis().y < -0.22);
   VK.A = () =>
     input.keys['A'.charCodeAt(0)] ||
     input.keys[0x25] ||
-    (mobileJoyAxis().x < -0.22);
+    (MobileControls.joyAxis().x < -0.22);
   VK.S = () =>
     input.keys['S'.charCodeAt(0)] ||
     input.keys[0x28] ||
-    (mobileJoyAxis().y > 0.22);
+    (MobileControls.joyAxis().y > 0.22);
   VK.D = () =>
     input.keys['D'.charCodeAt(0)] ||
     input.keys[0x27] ||
-    (mobileJoyAxis().x > 0.22);
+    (MobileControls.joyAxis().x > 0.22);
 
   let gl = null;
   let text = null;
@@ -149,7 +143,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   function bindFirstGesture() {
     const onGesture = () => {
       startAssetLoads();
-      if (isMobileControls()) enterMobileImmersiveMode();
+      if (MobileControls.isActive()) MobileDisplay.enterImmersiveMode();
     };
     const opts = { once: true, passive: true };
     document.addEventListener('pointerdown', onGesture, opts);
@@ -169,8 +163,8 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   function glInit() {
     canvas.style.display = 'block';
-    resizeGameCanvas(canvas, null);
-    if (!initGL(canvas)) return false;
+    Viewport.resizeCanvas(canvas, null);
+    if (!GLContext.init(canvas)) return false;
     gl = state.gl;
     return true;
   }
@@ -191,7 +185,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       (event) => {
         if (isConsoleToggleKey(event) || Console.show) {
           if (
-            isMobileControls() &&
+            MobileControls.isActive() &&
             Console.show &&
             document.activeElement === Console._mobileInput
           ) {
@@ -233,7 +227,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       (e) => {
         startAssetLoads();
         if (Console.show) return;
-        if (isMobileControls()) return;
+        if (MobileControls.isActive()) return;
         if (gameClient && !gameClient.isPlaying()) {
           const rect = canvas.getBoundingClientRect();
           const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -245,7 +239,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
           }
         }
         if (gameClient && gameClient.isPlaying()) {
-          if (!isMobileControls()) canvas.requestPointerLock?.();
+          if (!MobileControls.isActive()) canvas.requestPointerLock?.();
         }
       },
       false,
@@ -253,7 +247,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     canvas.addEventListener(
       'mouseup',
       () => {
-        if (!state.playing || isMobileControls()) return;
+        if (!state.playing || MobileControls.isActive()) return;
         input.mouse_down = false;
       },
       false,
@@ -261,7 +255,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     canvas.addEventListener(
       'mousedown',
       () => {
-        if (!state.playing || isMobileControls()) return;
+        if (!state.playing || MobileControls.isActive()) return;
         input.mouse_down = true;
       },
       false,
@@ -314,8 +308,8 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       },
       false,
     );
-    unbindViewport = bindViewportResize(canvas, gl);
-    initMobileControls(canvas);
+    unbindViewport = Viewport.bindResize(canvas, gl);
+    MobileControls.init(canvas);
   }
 
   let gFrameCount = 0;
@@ -353,7 +347,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
 
   function renderLoading() {
     if (gameReady()) {
-      hideLoadingOverlay();
+      loadingOverlay.hide();
       renderLoop();
       return;
     }
@@ -365,13 +359,13 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       gl.clearColor(0.05, 0.06, 0.08, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
-    const progress = getLoadingProgress(
-      buildLoadingChecks({
+    const progress = LoadingOverlay.getProgress(
+      LoadingOverlay.buildChecks({
         textReady,
         gameClient,
       }),
     );
-    updateLoadingOverlay(progress);
+    loadingOverlay.update(progress);
     Console.render();
     animationId = requestAnimationFrame(renderLoading);
   }
@@ -394,7 +388,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     }
     gameClient.render();
     if (useMsaa) state.msaa.end();
-    tickMobileControls();
+    MobileControls.tick();
     Console.render();
     calcFps();
     stats.count_kadr += 1;
@@ -417,11 +411,11 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       bindFirstGesture();
       Console.load();
       initQuality(options);
-      initMobileDisplay(canvas);
+      MobileDisplay.init(canvas);
       text = new Text();
       state.text = text;
 
-      ensureLoadingOverlay();
+      loadingOverlay.ensure();
       renderLoading();
 
       function waitForReady() {
@@ -451,8 +445,8 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
         state.localRoom = null;
       }
       if (state.msaa) state.msaa.dispose();
-      releaseWakeLock();
-      hideLoadingOverlay();
+      MobileDisplay.releaseWakeLock();
+      loadingOverlay.hide();
       unbindViewport?.();
       unbindViewport = null;
       gameClient = null;

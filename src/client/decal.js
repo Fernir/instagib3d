@@ -6,12 +6,12 @@ import { WEAPON } from '@/global.js';
 
 // Событийная обвязка декалей. Сам рендер реализован level3d.js (decalAdapter):
 // здесь мы лишь маршрутизируем игровые события в его render_decal.
-const Decal = {};
-
-Decal.render_decal = function (dynent, tex, color, sh_add = false) {
-  const lr = state.gameClient && state.gameClient.getLevelRender();
-  if (lr && lr.getDecal) lr.getDecal().render_decal(dynent, tex, color, sh_add);
-};
+export class Decal {
+  static render_decal(dynent, tex, color, sh_add = false) {
+    const lr = state.gameClient && state.gameClient.getLevelRender();
+    if (lr && lr.getDecal) lr.getDecal().render_decal(dynent, tex, color, sh_add);
+  }
+}
 
 Event.on('cl_botdead', function (pos, dir, id) {
   const color = state.Bot.isMutant(id) ? [0, 0.5, 0, 1] : [0.5, 0, 0, 1];
@@ -27,7 +27,6 @@ Event.on('cl_botdead', function (pos, dir, id) {
 });
 
 Event.on('cl_bulletlinecollide', function (bullet, dest, norm_dir) {
-  // Размер декали выбран так, чтобы на стенах было видно явное пятно/копоть.
   const radius = [0.45, 1.0, 0.45];
   const r = radius[bullet.type] || 0.45;
   Decal.render_decal(

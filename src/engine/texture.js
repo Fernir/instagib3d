@@ -5,13 +5,6 @@ function isPowerOfTwo(n) {
   return n > 0 && (n & (n - 1)) === 0;
 }
 
-function candidateUrls(url) {
-  const urls = [url];
-  if (/\.jpe?g$/i.test(url)) urls.unshift(url.replace(/\.jpe?g$/i, '.png'));
-  else if (/\.png$/i.test(url)) urls.push(url.replace(/\.png$/i, '.jpg'));
-  return [...new Set(urls)];
-}
-
 function uploadPlaceholder(gl, id, rgba) {
   gl.bindTexture(gl.TEXTURE_2D, id);
   gl.texImage2D(
@@ -155,20 +148,27 @@ async function loadImageSourceOnce(url) {
   });
 }
 
-async function loadImageSource(url) {
-  const urls = candidateUrls(url);
-  let lastErr = null;
-  for (let i = 0; i < urls.length; i++) {
-    try {
-      return await loadImageSourceOnce(urls[i]);
-    } catch (err) {
-      lastErr = err;
-    }
+export class Texture {
+  static candidateUrls(url) {
+    const urls = [url];
+    if (/\.jpe?g$/i.test(url)) urls.unshift(url.replace(/\.jpe?g$/i, '.png'));
+    else if (/\.png$/i.test(url)) urls.push(url.replace(/\.png$/i, '.jpg'));
+    return [...new Set(urls)];
   }
-  throw lastErr || new Error("while loading image '" + url + "'.");
-}
 
-class Texture {
+  static async loadImageSource(url) {
+    const urls = Texture.candidateUrls(url);
+    let lastErr = null;
+    for (let i = 0; i < urls.length; i++) {
+      try {
+        return await loadImageSourceOnce(urls[i]);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error("while loading image '" + url + "'.");
+  }
+
   constructor(img, param, callback) {
     let gl = state.gl;
     let id = gl.createTexture();
@@ -207,7 +207,7 @@ class Texture {
     };
 
     if (typeof img === 'string') {
-      loadImageSource(img)
+      Texture.loadImageSource(img)
         .then(function (source) {
           uploadLoaded(source, img);
         })
@@ -251,5 +251,3 @@ class Texture {
     };
   }
 }
-
-export { Texture, candidateUrls, loadImageSource };

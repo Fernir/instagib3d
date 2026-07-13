@@ -1,8 +1,7 @@
 import { state } from '@/core/runtime-state.js';
 
-import { bindMainFramebuffer } from './framebuffer.js';
-
-import { uploadDepthTexture } from './glcontext.js';
+import { MsaaTarget } from './msaa.js';
+import { GLContext } from './glcontext.js';
 import { Shader } from './shader.js';
 
 // Карта теней от «солнца»: глубина сцены рендерится из ортографической камеры,
@@ -83,7 +82,7 @@ export class ShadowMap {
 
     this.depthTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
-    uploadDepthTexture(gl, r, r);
+    GLContext.uploadDepthTexture(gl, r, r);
     setNearestClamp(gl);
 
     this.fbo = gl.createFramebuffer();
@@ -189,7 +188,7 @@ export class ShadowMap {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     }
-    bindMainFramebuffer();
+    MsaaTarget.bindMain();
   }
 
   texture() {

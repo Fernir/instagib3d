@@ -1,9 +1,9 @@
 import { assert } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 
-import { bindMainFramebuffer } from './framebuffer.js';
+import { MsaaTarget } from './msaa.js';
 
-class Framebuffer {
+export class Framebuffer {
   constructor(width, height) {
     let gl = state.gl;
     let id = gl.createFramebuffer();
@@ -36,12 +36,10 @@ class Framebuffer {
     };
     this.unbind = function () {
       assert(id);
-      bindMainFramebuffer();
+      MsaaTarget.bindMain();
     };
     this.getTexture = function () {
       return tex;
     };
   }
 }
-
-export { Framebuffer };

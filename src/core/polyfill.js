@@ -1,22 +1,24 @@
-export function assert(condition, message) {
-  if (!condition) {
-    message = message || 'Assertion failed';
-    Console.error(message);
-    if (typeof Error !== 'undefined') {
-      throw new Error(message);
+export class Console {
+  static html() {}
+
+  static assert(condition, message) {
+    if (!condition) {
+      message = message || 'Assertion failed';
+      Console.error(message);
+      if (typeof Error !== 'undefined') {
+        throw new Error(message);
+      }
+      throw message;
     }
-    throw message;
   }
+
+  static debug() {}
+  static info() {}
+  static warn() {}
+  static error() {}
 }
 
-export const Console = {
-  assert,
-  html: () => {},
-  debug() {},
-  info() {},
-  warn() {},
-  error() {},
-};
+export const assert = Console.assert.bind(Console);
 
 export const config = {
   get(key) {

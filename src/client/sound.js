@@ -21,7 +21,7 @@ const PANNER_ATTR = {
   maxDistance: MAX_DIST,
 };
 
-class Sound {
+export class Sound {
   constructor(file) {
     this.snd = new state.Howl({
       src: ['/game/sounds/' + file + '.wav'],
@@ -63,25 +63,54 @@ class Sound {
     this.snd.volume(this.vol, id);
     if (pos) this.snd.pos(pos.x, SOURCE_H, pos.y, id);
   }
+
+  static outOfRange(pos) {
+    const cam = state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera();
+    if (!cam || !cam.dynent) return false;
+    const dx = pos.x - cam.dynent.pos.x;
+    const dy = pos.y - cam.dynent.pos.y;
+    return dx * dx + dy * dy > SKIP_DIST_SQ;
+  }
+
+  static updateListener() {
+    const cam = state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera();
+    if (!cam || !cam.dynent || !state.Howler || !state.Howler.pos) return;
+    const eyeH = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
+    const angle = cam.dynent.angle || 0;
+    state.Howler.pos(cam.dynent.pos.x, eyeH, cam.dynent.pos.y);
+    state.Howler.orientation(-Math.sin(angle), 0, -Math.cos(angle), 0, 1, 0);
+  }
+
+  static setup() {
+    let volume = 0.12;
+    state.soundEnabled = true;
+    state.Howler.volume(volume);
+
+    function applyMute() {
+      if (typeof state.updateAudioMute === 'function') state.updateAudioMute();
+      else state.Howler.mute(!state.soundEnabled);
+    }
+    applyMute();
+
+    Console.addCommand('sound', 'toggle sound (on/off/toggle, default: toggle)', function (val) {
+      const v = (val || '').toString().toLowerCase();
+      if (v === 'on' || v === '1' || v === 'true') state.soundEnabled = true;
+      else if (v === 'off' || v === '0' || v === 'false') state.soundEnabled = false;
+      else state.soundEnabled = !state.soundEnabled;
+      applyMute();
+      Console.info('Sound ' + (state.soundEnabled ? 'ON' : 'OFF'));
+    });
+
+    Console.addCommand('soundVolume', 'volume of sound 0 - 1 (default 0.12)', function (val) {
+      if (!val) {
+        Console.debug('Volume =', volume);
+      } else {
+        volume = parseFloat(val);
+        state.Howler.volume(parseFloat(volume));
+      }
+    });
+  }
 }
-
-Sound.outOfRange = function (pos) {
-  const cam = state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera();
-  if (!cam || !cam.dynent) return false;
-  const dx = pos.x - cam.dynent.pos.x;
-  const dy = pos.y - cam.dynent.pos.y;
-  return dx * dx + dy * dy > SKIP_DIST_SQ;
-};
-
-// Каждый кадр обновляем позу слушателя по камере: позиция + ориентация (forward, up).
-Sound.updateListener = function () {
-  const cam = state.gameClient && state.gameClient.getCamera && state.gameClient.getCamera();
-  if (!cam || !cam.dynent || !state.Howler || !state.Howler.pos) return;
-  const eyeH = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
-  const angle = cam.dynent.angle || 0;
-  state.Howler.pos(cam.dynent.pos.x, eyeH, cam.dynent.pos.y);
-  state.Howler.orientation(-Math.sin(angle), 0, -Math.cos(angle), 0, 1, 0);
-};
 
 Event.on('frame', Sound.updateListener);
 
@@ -118,35 +147,3 @@ Event.on('cl_lineshoot', function (bullet) {
     state.Weapon.skins[bullet.type].snd_shoot.snd.rate(2, id);
   }
 });
-
-Sound.setup = function () {
-  let volume = 0.12;
-  state.soundEnabled = true;
-  state.Howler.volume(volume);
-
-  function applyMute() {
-    if (typeof state.updateAudioMute === 'function') state.updateAudioMute();
-    else state.Howler.mute(!state.soundEnabled);
-  }
-  applyMute();
-
-  Console.addCommand('sound', 'toggle sound (on/off/toggle, default: toggle)', function (val) {
-    const v = (val || '').toString().toLowerCase();
-    if (v === 'on' || v === '1' || v === 'true') state.soundEnabled = true;
-    else if (v === 'off' || v === '0' || v === 'false') state.soundEnabled = false;
-    else state.soundEnabled = !state.soundEnabled;
-    applyMute();
-    Console.info('Sound ' + (state.soundEnabled ? 'ON' : 'OFF'));
-  });
-
-  Console.addCommand('soundVolume', 'volume of sound 0 - 1 (default 0.12)', function (val) {
-    if (!val) {
-      Console.debug('Volume =', volume);
-    } else {
-      volume = parseFloat(val);
-      state.Howler.volume(parseFloat(volume));
-    }
-  });
-};
-
-export { Sound };

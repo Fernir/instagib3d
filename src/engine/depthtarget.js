@@ -1,7 +1,7 @@
 import { state } from '@/core/runtime-state.js';
 
-import { uploadDepthTexture } from './glcontext.js';
-import { bindMainFramebuffer } from './framebuffer.js';
+import { GLContext } from './glcontext.js';
+import { MsaaTarget } from './msaa.js';
 import { Shader } from './shader.js';
 
 // Depth-prepass: рисует геометрию (только позиция → глубина) в FBO с depth-
@@ -62,7 +62,7 @@ export class DepthTarget {
 
     this.depthTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
-    uploadDepthTexture(gl, w, h);
+    GLContext.uploadDepthTexture(gl, w, h);
     setNearestClamp(gl);
 
     this.fbo = gl.createFramebuffer();
@@ -104,7 +104,7 @@ export class DepthTarget {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    bindMainFramebuffer();
+    MsaaTarget.bindMain();
     return true;
   }
 }

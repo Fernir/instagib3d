@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldTrackVisualViewport } from '@/engine/viewport.js';
+import { Viewport } from '@/engine/viewport.js';
 import { state } from '@/core/runtime-state.js';
 
 describe('viewport', () => {
   it('tracks visual viewport when console is open on mobile', () => {
     state.mobileControls = {};
     state.Console = { show: true };
-    expect(shouldTrackVisualViewport()).toBe(true);
+    expect(Viewport.shouldTrackVisualViewport()).toBe(true);
     state.Console = { show: false };
     state.mobileControls = null;
   });
@@ -15,6 +15,6 @@ describe('viewport', () => {
   it('does not track visual viewport on desktop', () => {
     state.mobileControls = null;
     state.Console = { show: true };
-    expect(shouldTrackVisualViewport()).toBe(false);
+    expect(Viewport.shouldTrackVisualViewport()).toBe(false);
   });
 });

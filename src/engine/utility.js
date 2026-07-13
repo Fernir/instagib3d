@@ -1,11 +1,10 @@
 import { Buffer } from '@/core/buffer.js';
 import { Console, assert } from '@/core/polyfill.js';
 
-import { loadImageSource } from './texture.js';
 import { Texture } from './texture.js';
 
 Buffer.loadImage = function (img, callback) {
-  loadImageSource(img)
+  Texture.loadImageSource(img)
     .then(function (image) {
       assert(image.width === image.height);
       const size = image.width;

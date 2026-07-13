@@ -4,41 +4,41 @@ import { state } from '@/core/runtime-state.js';
 let activeProgram = null;
 const boundTextures = [];
 
-function stripLegacyPrecision(src) {
-  return src.replace(/#ifdef GL_ES[\s\S]*?#endif\s*\n?/g, '');
-}
-
-function hasGLSLVersion(src) {
-  return /^\s*#version\s+/m.test(src);
-}
-
-function upgradeToGLSL300(source, stage) {
-  if (hasGLSLVersion(source)) return source;
-  let s = stripLegacyPrecision(source);
-  s = s.replace(/\battribute\s+/g, 'in ');
-  if (stage === 'vert') {
-    s = s.replace(/\bvarying\s+/g, 'out ');
-  } else {
-    s = s.replace(/\bvarying\s+/g, 'in ');
-    if (!/\bout vec4 fragColor\b/.test(s)) {
-      s = 'out vec4 fragColor;\n' + s;
+export class Shader {
+  static upgradeToGLSL300(source, stage) {
+    if (Shader._hasGLSLVersion(source)) return source;
+    let s = Shader._stripLegacyPrecision(source);
+    s = s.replace(/\battribute\s+/g, 'in ');
+    if (stage === 'vert') {
+      s = s.replace(/\bvarying\s+/g, 'out ');
+    } else {
+      s = s.replace(/\bvarying\s+/g, 'in ');
+      if (!/\bout vec4 fragColor\b/.test(s)) {
+        s = 'out vec4 fragColor;\n' + s;
+      }
+      s = s.replace(/\bgl_FragColor\b/g, 'fragColor');
+      s = s.replace(/\btexture2D\s*\(/g, 'texture(');
+      s = s.replace(/\btextureCube\s*\(/g, 'texture(');
     }
-    s = s.replace(/\bgl_FragColor\b/g, 'fragColor');
-    s = s.replace(/\btexture2D\s*\(/g, 'texture(');
-    s = s.replace(/\btextureCube\s*\(/g, 'texture(');
+    return '#version 300 es\nprecision highp float;\n' + s;
   }
-  return '#version 300 es\nprecision highp float;\n' + s;
-}
 
-function bindProgram(prog) {
-  const gl = state.gl;
-  if (activeProgram !== prog) {
-    gl.useProgram(prog);
-    activeProgram = prog;
+  static bindProgram(prog) {
+    const gl = state.gl;
+    if (activeProgram !== prog) {
+      gl.useProgram(prog);
+      activeProgram = prog;
+    }
   }
-}
 
-class Shader {
+  static _stripLegacyPrecision(src) {
+    return src.replace(/#ifdef GL_ES[\s\S]*?#endif\s*\n?/g, '');
+  }
+
+  static _hasGLSLVersion(src) {
+    return /^\s*#version\s+/m.test(src);
+  }
+
   constructor(vp, fp, names) {
     function compileShader(prog, type) {
       const gl = state.gl;
@@ -53,8 +53,8 @@ class Shader {
     }
 
     const gl = state.gl;
-    const vertSrc = state.isWebGL2 ? upgradeToGLSL300(vp, 'vert') : vp;
-    const fragSrc = state.isWebGL2 ? upgradeToGLSL300(fp, 'frag') : fp;
+    const vertSrc = state.isWebGL2 ? Shader.upgradeToGLSL300(vp, 'vert') : vp;
+    const fragSrc = state.isWebGL2 ? Shader.upgradeToGLSL300(fp, 'frag') : fp;
     const frag = compileShader(fragSrc, gl.FRAGMENT_SHADER);
     const vert = compileShader(vertSrc, gl.VERTEX_SHADER);
     if (!frag || !vert) return null;
@@ -79,7 +79,7 @@ class Shader {
     }
 
     this.use = function () {
-      bindProgram(prog);
+      Shader.bindProgram(prog);
     };
     this.matrix = function (name, mat) {
       const loc = typeof name === 'string' ? gl.getUniformLocation(prog, name) : name;
@@ -123,5 +123,3 @@ Shader.vertexShader = function (mat_pos, mat_tex, position) {
   vert += '}\n';
   return vert;
 };
-
-export { Shader, bindProgram, upgradeToGLSL300 };

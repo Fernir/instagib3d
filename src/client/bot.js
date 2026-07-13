@@ -4,7 +4,7 @@ import { state, getMouseAngle, getMousePitch } from '@/core/runtime-state.js';
 import { Vector } from '@/core/vector.js';
 
 import { Shader } from '@/engine/shader.js';
-import { uiSnapBarHalfSize, uiSnapNdcCenter } from '@/engine/render_text.js';
+import { UILayout } from '@/engine/render_text.js';
 
 import { ITEM, WEAPON } from '@/global.js';
 
@@ -492,11 +492,11 @@ function drawHpBar(nx, ny, width, height, ratio, opacity) {
   const gl = state.gl;
   if (!state.quadBuffer) return;
   const a = opacity === undefined ? 1 : Math.max(0, Math.min(1, opacity));
-  const snapped = uiSnapNdcCenter(nx, ny);
+  const snapped = UILayout.snapNdcCenter(nx, ny);
   nx = snapped.nx;
   ny = snapped.ny;
 
-  const bar = uiSnapBarHalfSize(width, height);
+  const bar = UILayout.snapBarHalfSize(width, height);
   const hw = bar.hw;
   const hh = bar.hh;
   const border = 1;

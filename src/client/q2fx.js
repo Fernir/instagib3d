@@ -11,11 +11,11 @@ import { WEAPON, ITEM } from '@/global.js';
 
 import { Dynent } from '@/sim/dynent.js';
 
-class Q2FX {}
-
-Q2FX.particles = [];
-Q2FX.tex_glow = null;
-Q2FX.MAX_PARTICLES = 1200;
+export class Q2FX {
+  static particles = [];
+  static tex_glow = null;
+  static MAX_PARTICLES = 1200;
+}
 
 function bulletWorldDir(bullet) {
   const vx = bullet.dynent.vel.x;
@@ -2046,5 +2046,3 @@ Event.on('cl_botdead', function (pos, dir, id) {
 });
 
 state.Q2FX = Q2FX;
-
-export { Q2FX };

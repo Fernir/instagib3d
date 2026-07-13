@@ -121,4 +121,14 @@ export class MsaaTarget {
     this.depthRb = null;
     this.enabled = false;
   }
+
+  /** Bind main scene framebuffer (MSAA FBO when active, else default). */
+  static bindMain() {
+    const gl = state.gl;
+    if (!gl) return null;
+    const fbo = state.mainFramebuffer ?? null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.viewport(0, 0, state.canvas.width, state.canvas.height);
+    return fbo;
+  }
 }

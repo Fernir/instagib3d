@@ -6,51 +6,51 @@ import { Texture } from './texture.js';
 
 const UI_REF_ASPECT = 16 / 9;
 
-// Привязка половины NDC-бокса к целым пикселям (как рамки HUD и кнопка Play).
-function uiSnapHalfNdc(halfNdc, texPx) {
-  const screenH = state.canvas.height;
-  const fullPx = halfNdc * screenH;
-  if (texPx) {
-    const scale = Math.max(1, Math.round(fullPx / texPx));
-    return (scale * texPx) / screenH;
+export class UILayout {
+  static snapHalfNdc(halfNdc, texPx) {
+    const screenH = state.canvas.height;
+    const fullPx = halfNdc * screenH;
+    if (texPx) {
+      const scale = Math.max(1, Math.round(fullPx / texPx));
+      return (scale * texPx) / screenH;
+    }
+    const snappedPx = Math.max(2, Math.round(fullPx));
+    return snappedPx / screenH;
   }
-  const snappedPx = Math.max(2, Math.round(fullPx));
-  return snappedPx / screenH;
+
+  static textSizeForHalfNdc(halfNdc, baseSize, baseHalf) {
+    const aspect = state.canvas.width / state.canvas.height;
+    const scaled = baseSize * (halfNdc / baseHalf) * (UI_REF_ASPECT / aspect);
+    return Math.max(1.0, scaled);
+  }
+
+  static lineStep(lineHalfNdc) {
+    return UILayout.snapHalfNdc(lineHalfNdc) * 2;
+  }
+
+  static snapNdcCenter(ndcX, ndcY) {
+    const w = state.canvas.width;
+    const h = state.canvas.height;
+    const px = Math.round((ndcX * 0.5 + 0.5) * w);
+    const py = Math.round((ndcY * 0.5 + 0.5) * h);
+    return { nx: (px / w) * 2 - 1, ny: (py / h) * 2 - 1 };
+  }
+
+  static snapBarHalfSize(widthNdc, heightNdc) {
+    const w = state.canvas.width;
+    const h = state.canvas.height;
+    const widthPx = Math.max(4, Math.round(widthNdc * w));
+    const heightPx = Math.max(2, Math.round(heightNdc * h));
+    return {
+      hw: widthPx / (2 * w),
+      hh: heightPx / (2 * h),
+      widthPx,
+      heightPx,
+    };
+  }
 }
 
-// Размер шрифта, согласованный с uiSnapHalfNdc: компенсирует умножение на aspect в render().
-function uiTextSizeForHalfNdc(halfNdc, baseSize, baseHalf) {
-  const aspect = state.canvas.width / state.canvas.height;
-  const scaled = baseSize * (halfNdc / baseHalf) * (UI_REF_ASPECT / aspect);
-  return Math.max(1.0, scaled);
-}
-
-function uiLineStep(lineHalfNdc) {
-  return uiSnapHalfNdc(lineHalfNdc) * 2;
-}
-
-function uiSnapNdcCenter(ndcX, ndcY) {
-  const w = state.canvas.width;
-  const h = state.canvas.height;
-  const px = Math.round((ndcX * 0.5 + 0.5) * w);
-  const py = Math.round((ndcY * 0.5 + 0.5) * h);
-  return { nx: (px / w) * 2 - 1, ny: (py / h) * 2 - 1 };
-}
-
-function uiSnapBarHalfSize(widthNdc, heightNdc) {
-  const w = state.canvas.width;
-  const h = state.canvas.height;
-  const widthPx = Math.max(4, Math.round(widthNdc * w));
-  const heightPx = Math.max(2, Math.round(heightNdc * h));
-  return {
-    hw: widthPx / (2 * w),
-    hh: heightPx / (2 * h),
-    widthPx,
-    heightPx,
-  };
-}
-
-class Text {
+export class Text {
   constructor() {
     //Xpos, Ypos, Width, Height, Xoffset, Yoffset, OrigW, OrigH
     let large_font = [
@@ -433,12 +433,3 @@ class Text {
     };
   }
 }
-
-export {
-  Text,
-  uiLineStep,
-  uiSnapBarHalfSize,
-  uiSnapHalfNdc,
-  uiSnapNdcCenter,
-  uiTextSizeForHalfNdc,
-};

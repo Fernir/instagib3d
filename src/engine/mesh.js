@@ -79,7 +79,7 @@ export class MeshBuilder {
   }
 }
 
-class Mesh {
+export class Mesh {
   constructor(vertices, stride = 8) {
     this.stride = stride;
     if (!vertices || vertices.length === 0) {

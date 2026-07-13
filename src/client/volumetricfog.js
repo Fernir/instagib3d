@@ -1,7 +1,7 @@
 import { state } from '@/core/runtime-state.js';
 
 import { DepthTarget } from '@/engine/depthtarget.js';
-import { bindMainFramebuffer } from '@/engine/framebuffer.js';
+import { MsaaTarget } from '@/engine/msaa.js';
 import { GLSL } from '@/engine/glsl.js';
 import { Shader } from '@/engine/shader.js';
 
@@ -246,7 +246,7 @@ export class VolumetricFog {
       gl.disable(gl.DEPTH_TEST);
       this.drawSlices(fogCam, inv, t);
 
-      bindMainFramebuffer();
+      MsaaTarget.bindMain();
       this.blit.use();
       this.blit.texture(this.blit.tex_fog, this.fogColorTex, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);

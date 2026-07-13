@@ -2,8 +2,8 @@ import { Event } from '@/core/event.js';
 import { Console, assert } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 
-import { minimapRightEdge } from '@/engine/minimap-layout.js';
-import { uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc } from '@/engine/render_text.js';
+import { MinimapLayout } from '@/engine/minimap-layout.js';
+import { UILayout } from '@/engine/render_text.js';
 import { Shader } from '@/engine/shader.js';
 
 import { WEAPON } from '@/global.js';
@@ -19,9 +19,9 @@ class Achievement {
     this.render = function () {
       let alpha = (this.time - Date.now()) / 500;
       if (alpha > 2) alpha = 2;
-      const achHalf = uiSnapHalfNdc(0.035);
-      const achSize = uiTextSizeForHalfNdc(achHalf, 2, 0.035);
-      const achSizeBig = uiTextSizeForHalfNdc(achHalf, 2.5, 0.035);
+      const achHalf = UILayout.snapHalfNdc(0.035);
+      const achSize = UILayout.textSizeForHalfNdc(achHalf, 2, 0.035);
+      const achSizeBig = UILayout.textSizeForHalfNdc(achHalf, 2.5, 0.035);
 
       if (type === Achievement.KILL)
         state.text.render([0, 0.35], achSize, '#b' + str, 1, { center: true, alpha: alpha });
@@ -77,14 +77,13 @@ Achievement.ACHIEV = 2;
 Achievement.ACHIEV_BIG = 3;
 Achievement.DISACHIEV = 4;
 
-let HUD = {
-  achievements: [],
-  showtable: false,
-  hitFlashUntil: 0,
-  deathStart: 0,
-};
+export class HUD {
+  static achievements = [];
+  static showtable = false;
+  static hitFlashUntil = 0;
+  static deathStart = 0;
 
-HUD.addAchievement = function (type, str, prior) {
+  static addAchievement(type, str, prior) {
   const spectating =
     state.gameClient && state.gameClient.isSpectating && state.gameClient.isSpectating();
   if (!state.playing && !spectating) return;
@@ -92,90 +91,10 @@ HUD.addAchievement = function (type, str, prior) {
   if (ach) {
     if (Date.now() < ach.time && ach.prior > prior) return;
   }
-  HUD.achievements[type] = new Achievement(type, str, prior);
-};
-
-Event.on('keydown', function (key) {
-  if (Console.show) return;
-  if (key === Console.TAB) HUD.showtable = !HUD.showtable;
-});
-
-Event.on('cl_death', function (id, killer_id) {
-  HUD.deathStart = Date.now();
-  if (id === killer_id) {
-    HUD.addAchievement(Achievement.DEAD, getPhrase('PHRASE_SELFKILL'), 2);
-  } else {
-    let nick = state.gameClient.getNickById(killer_id);
-    let msg = nick ? getPhrase('PHRASE_YOUKILLEDBOT') + nick : getPhrase('PHRASE_YOUKILLED');
-    HUD.addAchievement(Achievement.DEAD, msg, 1);
+    HUD.achievements[type] = new Achievement(type, str, prior);
   }
-});
 
-Event.on('cl_botpain', function (pos, dir, id) {
-  if (!state.gameClient) return;
-  const cam = state.gameClient.getCamera ? state.gameClient.getCamera() : null;
-  if (cam && id === cam.id) {
-    HUD.hitFlashUntil = Date.now() + 380;
-  }
-});
-
-Event.on('cl_botrespawn', function () {
-  // После респа эффект смерти затухает быстрее.
-  if (HUD.deathStart && Date.now() - HUD.deathStart > 200) {
-    HUD.deathStart = 0;
-  }
-});
-
-Event.on('cl_kill', function (deader_id) {
-  let nick = state.gameClient.getNickById(deader_id);
-  let msg = nick ? getPhrase('PHRASE_YOUKILLBOT') + nick : getPhrase('PHRASE_YOUKILL');
-  HUD.addAchievement(Achievement.KILL, msg, 1);
-});
-
-Event.on('cl_multi', function (multi) {
-  assert(multi > 0);
-  if (multi > 3) multi = 3;
-  let message = [
-    getPhrase('PHRASE_DOUBLEKILL'),
-    getPhrase('PHRASE_TRIPLEKILL'),
-    getPhrase('PHRASE_MULTIKILL'),
-  ];
-  HUD.addAchievement(Achievement.ACHIEV_BIG, message[multi - 1] + getPhrase('PHRASE_KILL'), multi);
-});
-
-Event.on('cl_killer', function () {
-  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_SERIALKILLER'), 1);
-});
-
-Event.on('cl_sniper', function () {
-  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_SNIPER'), 4);
-});
-
-Event.on('cl_avenger', function () {
-  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_AVENGER'), 3);
-});
-
-Event.on('cl_quickkill', function () {
-  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_QUICKKILL'), 2);
-});
-
-Event.on('cl_quickdeath', function () {
-  HUD.addAchievement(Achievement.DISACHIEV, getPhrase('PHRASE_QUICKDEATH'), 2);
-});
-
-Event.on('cl_looser', function () {
-  HUD.addAchievement(Achievement.DISACHIEV, getPhrase('PHRASE_LOOSER'), 1);
-});
-
-Event.on('cl_telefraging', function () {
-  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_TELEFRAGING'), 5);
-});
-
-Event.on('cl_telefraged', function () {
-  HUD.addAchievement(Achievement.DISACHIEV, getPhrase('PHRASE_TELEFRAGED'), 3);
-});
-
-HUD.load = function () {
+  static load() {
   let vert_hud =
     '\n\
     attribute vec4 position;\n\
@@ -296,13 +215,13 @@ HUD.load = function () {
     }\n';
 
   HUD.shader_frame = new Shader(vert_hud, frag_frame, ['vec_pos', 'rotate90', 'frame', 'color']);
-};
+  }
 
-HUD.ready = function () {
-  return !!HUD.shader_frame;
-};
+  static ready() {
+    return !!HUD.shader_frame;
+  }
 
-HUD.render = function (bot, table, playing) {
+  static render(bot, table, playing) {
   if (playing === undefined) playing = true;
   const spectating =
     state.gameClient && state.gameClient.isSpectating && state.gameClient.isSpectating();
@@ -318,7 +237,7 @@ HUD.render = function (bot, table, playing) {
     const SLOT_X = 0.9;
     const SLOT_Y_TOP = 0.82;
     const SLOT_STEP = 0.2;
-    const FRAME_HH = uiSnapHalfNdc(0.08);
+    const FRAME_HH = UILayout.snapHalfNdc(0.08);
     const FRAME_HW = (2.0 * FRAME_HH) / aspect;
     // Иконка на весь слот; рамка рисуется первой, кольцо остаётся по краям.
     const ICON_INSET = 1.7;
@@ -329,8 +248,8 @@ HUD.render = function (bot, table, playing) {
       ICON_HW = maxIconHW;
       ICON_HH = ICON_HW * aspect;
     }
-    const statHalf = uiSnapHalfNdc(1.0 / 12.0);
-    const statTextSize = uiTextSizeForHalfNdc(statHalf, 2, 1.0 / 12.0);
+    const statHalf = UILayout.snapHalfNdc(1.0 / 12.0);
+    const statTextSize = UILayout.textSizeForHalfNdc(statHalf, 2, 1.0 / 12.0);
     for (let i = WEAPON.PISTOL; i <= WEAPON.ROCKET; i++) {
       let alpha = bot.patrons[i] / (1 << 5);
       if (alpha > 1) alpha = 1;
@@ -398,12 +317,12 @@ HUD.render = function (bot, table, playing) {
     });
   }
 
-  renderBottomStats(bot, playing);
+  HUD.renderBottomStats(bot, playing);
 
   function renderTableCentered() {
-    const rowHalf = uiSnapHalfNdc(0.0275);
-    const rowStep = uiLineStep(rowHalf);
-    const textSize = uiTextSizeForHalfNdc(rowHalf, 2, 0.0275);
+    const rowHalf = UILayout.snapHalfNdc(0.0275);
+    const rowStep = UILayout.lineStep(rowHalf);
+    const textSize = UILayout.textSizeForHalfNdc(rowHalf, 2, 0.0275);
     let Y = 0.28;
     table.forEach((row, index) => {
       let rank = '' + (index + 1) + ')';
@@ -425,15 +344,15 @@ HUD.render = function (bot, table, playing) {
 
   if (!Console.show && HUD.showtable) renderTableCentered();
 
-  renderDamageVignette();
-};
+  HUD.renderDamageVignette();
+  }
 
-function renderBottomStats(bot, playing) {
+  static renderBottomStats(bot, playing) {
   const Y = -0.96;
   const aspect = state.canvas.width / state.canvas.height;
-  const statHalf = uiSnapHalfNdc(0.02);
-  const textSize = uiTextSizeForHalfNdc(statHalf, 2, 0.02);
-  const minimapRight = minimapRightEdge(aspect);
+  const statHalf = UILayout.snapHalfNdc(0.02);
+  const textSize = UILayout.textSizeForHalfNdc(statHalf, 2, 0.02);
+  const minimapRight = MinimapLayout.rightEdge(aspect);
   let x = minimapRight + 0.06;
   const fps = state.stats ? state.stats.fps : 0;
   const ping = state.gameClient && state.gameClient.getPing ? state.gameClient.getPing() : 0;
@@ -452,9 +371,9 @@ function renderBottomStats(bot, playing) {
   state.text.render([x, Y], textSize, '#gFPS#w= ' + fps, 1);
   x += 0.16;
   state.text.render([x, Y], textSize, '#gPing#w= ' + ping, 1);
-}
+  }
 
-function renderDamageVignette() {
+  static renderDamageVignette() {
   const now = Date.now();
   let intensity = 0;
   let tint = 0.85;
@@ -492,7 +411,86 @@ function renderDamageVignette() {
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   gl.disable(gl.BLEND);
+  }
 }
 
+Event.on('keydown', function (key) {
+  if (Console.show) return;
+  if (key === Console.TAB) HUD.showtable = !HUD.showtable;
+});
+
+Event.on('cl_death', function (id, killer_id) {
+  HUD.deathStart = Date.now();
+  if (id === killer_id) {
+    HUD.addAchievement(Achievement.DEAD, getPhrase('PHRASE_SELFKILL'), 2);
+  } else {
+    let nick = state.gameClient.getNickById(killer_id);
+    let msg = nick ? getPhrase('PHRASE_YOUKILLEDBOT') + nick : getPhrase('PHRASE_YOUKILLED');
+    HUD.addAchievement(Achievement.DEAD, msg, 1);
+  }
+});
+
+Event.on('cl_botpain', function (pos, dir, id) {
+  if (!state.gameClient) return;
+  const cam = state.gameClient.getCamera ? state.gameClient.getCamera() : null;
+  if (cam && id === cam.id) {
+    HUD.hitFlashUntil = Date.now() + 380;
+  }
+});
+
+Event.on('cl_botrespawn', function () {
+  if (HUD.deathStart && Date.now() - HUD.deathStart > 200) {
+    HUD.deathStart = 0;
+  }
+});
+
+Event.on('cl_kill', function (deader_id) {
+  let nick = state.gameClient.getNickById(deader_id);
+  let msg = nick ? getPhrase('PHRASE_YOUKILLBOT') + nick : getPhrase('PHRASE_YOUKILL');
+  HUD.addAchievement(Achievement.KILL, msg, 1);
+});
+
+Event.on('cl_multi', function (multi) {
+  assert(multi > 0);
+  if (multi > 3) multi = 3;
+  let message = [
+    getPhrase('PHRASE_DOUBLEKILL'),
+    getPhrase('PHRASE_TRIPLEKILL'),
+    getPhrase('PHRASE_MULTIKILL'),
+  ];
+  HUD.addAchievement(Achievement.ACHIEV_BIG, message[multi - 1] + getPhrase('PHRASE_KILL'), multi);
+});
+
+Event.on('cl_killer', function () {
+  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_SERIALKILLER'), 1);
+});
+
+Event.on('cl_sniper', function () {
+  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_SNIPER'), 4);
+});
+
+Event.on('cl_avenger', function () {
+  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_AVENGER'), 3);
+});
+
+Event.on('cl_quickkill', function () {
+  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_QUICKKILL'), 2);
+});
+
+Event.on('cl_quickdeath', function () {
+  HUD.addAchievement(Achievement.DISACHIEV, getPhrase('PHRASE_QUICKDEATH'), 2);
+});
+
+Event.on('cl_looser', function () {
+  HUD.addAchievement(Achievement.DISACHIEV, getPhrase('PHRASE_LOOSER'), 1);
+});
+
+Event.on('cl_telefraging', function () {
+  HUD.addAchievement(Achievement.ACHIEV, getPhrase('PHRASE_TELEFRAGING'), 5);
+});
+
+Event.on('cl_telefraged', function () {
+  HUD.addAchievement(Achievement.DISACHIEV, getPhrase('PHRASE_TELEFRAGED'), 3);
+});
+
 state.HUD = HUD;
-export { HUD };

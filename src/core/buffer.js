@@ -3,7 +3,7 @@ import { Console } from './polyfill.js';
 import { Random } from './utility.js';
 import { Vector } from './vector.js';
 
-class Buffer {
+export class Buffer {
   constructor(size, seed) {
     let data = new Float32Array(size * size);
     data.fill(0.0);
@@ -422,5 +422,3 @@ class Buffer {
     };
   }
 }
-
-export { Buffer };

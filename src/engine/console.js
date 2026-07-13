@@ -2,9 +2,9 @@ import { Event } from '@/core/event.js';
 import { Console } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 
-import { isMobileControls } from '@/engine/mobilecontrols.js';
-import { uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc } from '@/engine/render_text.js';
-import { resizeGameCanvas } from '@/engine/viewport.js';
+import { MobileControls } from '@/engine/mobilecontrols.js';
+import { UILayout } from '@/engine/render_text.js';
+import { Viewport } from '@/engine/viewport.js';
 import { Shader } from './shader.js';
 
 const SLIDE_SPEED = 14;
@@ -14,7 +14,7 @@ Event.on('keydown', function (key, code) {
   if (code === Console.TILDA_CODE || key === Console.TILDA_MAC || key === Console.TILDA_WIN) {
     Console.toggle();
   } else if (Console.show) {
-    if (isMobileControls() && document.activeElement === Console._mobileInput) return;
+    if (MobileControls.isActive() && document.activeElement === Console._mobileInput) return;
     if (key.length === 1) {
       Console.current_command += key;
     } else if (key === Console.ENTER) {
@@ -292,7 +292,7 @@ Console.syncMobileInputLayout = function () {
 Console.syncMobileInputVisibility = function () {
   const el = Console._mobileInput;
   if (!el) return;
-  const active = Console.show && isMobileControls();
+  const active = Console.show && MobileControls.isActive();
   el.style.display = active ? 'block' : 'none';
   el.style.pointerEvents = active ? 'auto' : 'none';
   if (active) Console.syncMobileInputLayout();
@@ -300,7 +300,7 @@ Console.syncMobileInputVisibility = function () {
 };
 
 Console.focusMobileInput = function () {
-  if (!isMobileControls() || !Console.show) return;
+  if (!MobileControls.isActive() || !Console.show) return;
   const el = Console.ensureMobileInput();
   if (!el) return;
   Console.syncMobileInputVisibility();
@@ -311,7 +311,7 @@ Console.focusMobileInput = function () {
     const len = el.value.length;
     if (el.setSelectionRange) el.setSelectionRange(len, len);
   };
-  if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
+  if (state.canvas) Viewport.resizeCanvas(state.canvas, state.gl);
   requestAnimationFrame(focusInput);
   setTimeout(focusInput, 100);
 };
@@ -326,10 +326,10 @@ Console.toggle = function () {
   Console.syncMobileInputVisibility();
   if (Console.show) {
     if (document.pointerLockElement) document.exitPointerLock?.();
-    if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
+    if (state.canvas) Viewport.resizeCanvas(state.canvas, state.gl);
     Console.focusMobileInput();
   } else {
-    if (state.canvas) resizeGameCanvas(state.canvas, state.gl);
+    if (state.canvas) Viewport.resizeCanvas(state.canvas, state.gl);
     Console.blurMobileInput();
   }
 };
@@ -362,11 +362,11 @@ Console.render = function () {
   const ease = smoothstep(Console.slide);
   const { panelBottom, panelTop } = panelBounds(ease);
 
-  const lineHalf = uiSnapHalfNdc(0.028);
-  const textSize = uiTextSizeForHalfNdc(lineHalf, 2, 0.028);
-  const lineStep = uiLineStep(lineHalf);
-  const inputHalf = uiSnapHalfNdc(0.022);
-  const inputSize = uiTextSizeForHalfNdc(inputHalf, 2, 0.022);
+  const lineHalf = UILayout.snapHalfNdc(0.028);
+  const textSize = UILayout.textSizeForHalfNdc(lineHalf, 2, 0.028);
+  const lineStep = UILayout.lineStep(lineHalf);
+  const inputHalf = UILayout.snapHalfNdc(0.022);
+  const inputSize = UILayout.textSizeForHalfNdc(inputHalf, 2, 0.022);
   const inputY = panelBottom + INPUT_PAD + inputHalf;
   const msgTop = panelTop - INPUT_PAD - lineHalf;
   const msgLimit = inputY + lineStep * 1.1;
