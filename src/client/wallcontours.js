@@ -222,10 +222,10 @@ export function mergeWallSegments(segments) {
 
     const len = Math.hypot(end[0] - start[0], end[1] - start[1]);
     if (len < 1e-5) {
-      merged.push({ p0: s.p0, p1: s.p1, nx: nx, nz: nz, len: s.len });
+      merged.push({ p0: s.p0, p1: s.p1, nx: nx, nz: nz, len: s.len, mergedRunId: merged.length });
       continue;
     }
-    merged.push({ p0: start, p1: end, nx: nx, nz: nz, len: len });
+    merged.push({ p0: start, p1: end, nx: nx, nz: nz, len: len, mergedRunId: merged.length });
   }
 
   return merged;
@@ -257,6 +257,7 @@ export function splitLongWallSegments(segments, maxWorldLen) {
         nz: seg.nz,
         len: chunk,
         uOffset: along,
+        mergedRunId: seg.mergedRunId,
       });
       along += chunk;
     }
@@ -316,5 +317,59 @@ export function chainWallUStarts(segments) {
   for (let i = 0; i < segments.length; i++) {
     delete segments[i]._dir;
     delete segments[i]._uvChained;
+  }
+}
+
+const EP_SNAP = 8192;
+
+export function snapWallPoint(p) {
+  return [Math.round(p[0] * EP_SNAP) / EP_SNAP, Math.round(p[1] * EP_SNAP) / EP_SNAP];
+}
+
+export function wallEpKey(p) {
+  const s = snapWallPoint(p);
+  return s[0].toFixed(4) + ',' + s[1].toFixed(4);
+}
+
+// Связный список коллинеарных кусков одной стены — для атласа декалей и непрерывного UV.
+export function linkColinearRuns(segments) {
+  const EPS_DIR = 0.9995;
+  const endpoints = new Map();
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    s.runNext = null;
+    s.runPrev = null;
+    for (const [end, pt] of [
+      [0, s.p0],
+      [1, s.p1],
+    ]) {
+      const k = wallEpKey(pt);
+      if (!endpoints.has(k)) endpoints.set(k, []);
+      endpoints.get(k).push({ idx: i, end });
+    }
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const dir = [(s.p1[0] - s.p0[0]) / s.len, (s.p1[1] - s.p0[1]) / s.len];
+    const cands = endpoints.get(wallEpKey(s.p1));
+    if (!cands) continue;
+    let best = null;
+    let bestDot = EPS_DIR;
+    for (let c = 0; c < cands.length; c++) {
+      const cand = cands[c];
+      if (cand.idx === i || cand.end !== 0) continue;
+      const o = segments[cand.idx];
+      const odir = [(o.p1[0] - o.p0[0]) / o.len, (o.p1[1] - o.p0[1]) / o.len];
+      const dot = dir[0] * odir[0] + dir[1] * odir[1];
+      if (dot > bestDot && o.nx * s.nx + o.nz * s.nz > EPS_DIR) {
+        bestDot = dot;
+        best = o;
+      }
+    }
+    if (best && !best.runPrev) {
+      s.runNext = best;
+      best.runPrev = s;
+    }
   }
 }

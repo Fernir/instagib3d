@@ -11,6 +11,8 @@ import {
   canMonitorQualityFps,
   detectInitialQualityTier,
   downgradeStepsForFps,
+  effectiveDowngradeSteps,
+  MAX_QUALITY_STEPS_PER_TICK,
   isAndroidDevice,
   isMobileLikeDevice,
   samplesNeededForDowngrade,
@@ -85,6 +87,9 @@ describe('quality', () => {
     expect(downgradeStepsForFps(28)).toBe(3);
     expect(downgradeStepsForFps(35)).toBe(2);
     expect(downgradeStepsForFps(52)).toBe(1);
+    expect(MAX_QUALITY_STEPS_PER_TICK).toBe(1);
+    expect(effectiveDowngradeSteps(28)).toBe(1);
+    expect(effectiveDowngradeSteps(52)).toBe(1);
   });
 
   it('waits for preview warmup before monitoring fps', () => {

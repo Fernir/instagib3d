@@ -2,7 +2,6 @@ import { Console } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 import { Vector } from '@/core/vector.js';
 
-import { buildWireLineBuffer, drawStaticDepth, drawWireFillInterleaved, drawWireLines, isWireframe } from '@/engine/mesh.js';
 import { Shader } from '@/engine/shader.js';
 import { Texture } from '@/engine/texture.js';
 
@@ -90,11 +89,6 @@ function renderWeaponPickup3D(item, camera) {
   const phase = pickupPhase(item);
   const m = weaponPickupMatrix(item);
 
-  if (isWireframe()) {
-    spec.model.render(m, 0, 0, 0, spec.skinIndex, [1, 1, 1, 1], { distFog });
-    return true;
-  }
-
   const gl = state.gl;
   const wasBlend = gl.isEnabled(gl.BLEND);
   gl.disable(gl.BLEND);
@@ -104,6 +98,7 @@ function renderWeaponPickup3D(item, camera) {
   spec.model.render(m, 0, 0, 0, spec.skinIndex, [1, 1, 1, 1], {
     sunDir: (lr && lr.sunDir) || [0.4, -0.85, 0.35],
     distFog,
+    weaponBoost: 0.68,
   });
 
   const pulse = 0.65 + 0.35 * Math.sin(now * 0.005 + phase);
@@ -261,21 +256,14 @@ class PickupIcon {
     const gl = state.gl;
     const depth = glyph === 'shield' ? 0.28 : 0.22;
     const verts = buildPrism(glyphTriangles(glyph), depth);
-    const wire = buildWireLineBuffer(verts, 6);
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
-    let wireBuffer = null;
-    if (wire.count > 0) {
-      wireBuffer = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, wireBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, wire.data, gl.STATIC_DRAW);
-    }
     if (state.quadBuffer) {
       gl.bindBuffer(gl.ARRAY_BUFFER, state.quadBuffer);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     }
-    m = { buffer, wireBuffer, wireCount: wire.count, count: verts.length / 6, ver: GLYPH_MESH_VER };
+    m = { buffer, count: verts.length / 6, ver: GLYPH_MESH_VER };
     this.meshes[glyph] = m;
     return m;
   }
@@ -304,46 +292,6 @@ class PickupIcon {
     state.LevelRender.shadowDrawLocal(mvp, mesh.buffer, 6, mesh.count);
   }
 
-  renderWireDepth(item, glyph) {
-    this.init();
-    const mesh = this.mesh(glyph);
-    if (!mesh.count) return false;
-    const mat4 = state.mat4;
-    const m = this.modelMatrix(item);
-    const matPos = mat4.create();
-    mat4.multiply(matPos, state.viewProj3D, m);
-    drawStaticDepth(mesh.buffer, mesh.count, 6, matPos);
-    return true;
-  }
-
-  renderWireFill(item, glyph, color) {
-    this.init();
-    const mesh = this.mesh(glyph);
-    if (!mesh.count) return false;
-    const rgb = color || [0.7, 0.75, 0.85];
-    const mat4 = state.mat4;
-    const m = this.modelMatrix(item);
-    const matPos = mat4.create();
-    mat4.multiply(matPos, state.viewProj3D, m);
-    drawWireFillInterleaved(mesh.buffer, mesh.count, 6, 3, rgb, matPos);
-    return true;
-  }
-
-  renderWireDraw(item, camera, glyph, color) {
-    this.init();
-    const mesh = this.mesh(glyph);
-    if (!mesh.count) return false;
-    const lr = state.LevelRender;
-    const distFog = pickupDistFog(lr, camera, item);
-    const mat4 = state.mat4;
-    const m = this.modelMatrix(item);
-    const matPos = mat4.create();
-    mat4.multiply(matPos, state.viewProj3D, m);
-    const rgb = pickupFogRgb(lr, color, distFog);
-    if (mesh.wireCount) drawWireLines(mesh.wireBuffer, mesh.wireCount, rgb, matPos, 0.0012);
-    return true;
-  }
-
   render(item, camera, glyph, color) {
     this.init();
     if (!this.shader) return false;
@@ -362,12 +310,6 @@ class PickupIcon {
     mat4.multiply(matPos, state.viewProj3D, m);
     const sun = (lr && lr.sunDir) || [0.4, -0.85, 0.35];
     const rgb = pickupFogRgb(lr, color, distFog);
-
-    if (isWireframe()) {
-      this.renderWireDepth(item, glyph);
-      this.renderWireDraw(item, camera, glyph, color);
-      return true;
-    }
 
     const wasBlend = gl.isEnabled(gl.BLEND);
     gl.disable(gl.BLEND);
@@ -401,39 +343,6 @@ class PickupIcon {
   }
 }
 
-Item.renderWireDepth = function (camera, item) {
-  const icon = POWERUP_ICONS[item.type];
-  if (icon) return Item.icon.renderWireDepth(item, icon.glyph);
-  if (!Item.pickupMd2) return false;
-  const spec = Item.pickupMd2[item.type];
-  if (!spec || !spec.model || !spec.model.frameBuffers || !spec.model.frameBuffers.length) return false;
-  if (!spec.model.ready()) return false;
-  spec.model.renderWireDepth(weaponPickupMatrix(item), 0, 0, 0);
-  return true;
-};
-
-Item.renderWireFill = function (camera, item) {
-  const icon = POWERUP_ICONS[item.type];
-  if (icon) return Item.icon.renderWireFill(item, icon.glyph, icon.color);
-  if (!Item.pickupMd2) return false;
-  const spec = Item.pickupMd2[item.type];
-  if (!spec || !spec.model || !spec.model.frameBuffers || !spec.model.frameBuffers.length) return false;
-  if (!spec.model.ready()) return false;
-  const c = spec.color || [1, 1, 1, 1];
-  spec.model.renderWireFill(weaponPickupMatrix(item), 0, 0, 0, [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]);
-  return true;
-};
-
-Item.renderWireDraw = function (camera, item) {
-  const icon = POWERUP_ICONS[item.type];
-  if (icon) return Item.icon.renderWireDraw(item, camera, icon.glyph, icon.color);
-  if (!Item.pickupMd2) return false;
-  const spec = Item.pickupMd2[item.type];
-  if (!spec || !spec.model || !spec.model.frameBuffers || !spec.model.frameBuffers.length) return false;
-  if (!spec.model.ready()) return false;
-  spec.model.renderWireDraw(weaponPickupMatrix(item), 0, 0, 0, spec.color || [1, 1, 1, 1]);
-  return true;
-};
 
 Item.render = function (camera, item) {
   const icon = POWERUP_ICONS[item.type];

@@ -3,7 +3,7 @@ import { state, VK } from '@/core/runtime-state.js';
 
 import { initGL } from '@/engine/glcontext.js';
 import { initMobileControls, isMobileControls, mobileJoyAxis, tickMobileControls } from '@/engine/mobilecontrols.js';
-import { initMobileDisplay, releaseWakeLock } from '@/engine/fullscreen.js';
+import { initMobileDisplay, releaseWakeLock, enterMobileImmersiveMode } from '@/engine/fullscreen.js';
 import { initQuality } from '@/engine/quality.js';
 import {
   buildLoadingChecks,
@@ -48,8 +48,6 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
     count_kadr: 0,
     count_dynent_rendering: 0,
     count_decal: 0,
-    count_net_package: 0,
-    memory_all_package: 0,
     fps: 0,
   };
 
@@ -149,7 +147,10 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   state.startAssetLoads = startAssetLoads;
 
   function bindFirstGesture() {
-    const onGesture = () => startAssetLoads();
+    const onGesture = () => {
+      startAssetLoads();
+      if (isMobileControls()) enterMobileImmersiveMode();
+    };
     const opts = { once: true, passive: true };
     document.addEventListener('pointerdown', onGesture, opts);
     document.addEventListener('keydown', onGesture, opts);
@@ -320,6 +321,7 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
   let gFrameCount = 0;
   let gSeconds = Date.now();
   let previewQualityStarted = false;
+  let waitForReadyTimer = 0;
   function calcFps() {
     const now = Date.now();
     gFrameCount += 1;
@@ -423,17 +425,19 @@ export async function createInstagibRuntime(canvas, userOptions = {}) {
       renderLoading();
 
       function waitForReady() {
+        if (destroyed) return;
         if (contentReady() && !gameClient) {
           gameClient = new GameClient(param);
           state.gameClient = gameClient;
         }
-        if (!gameReady()) setTimeout(waitForReady, 100);
+        if (!gameReady()) waitForReadyTimer = setTimeout(waitForReady, 100);
       }
       waitForReady();
     },
     destroy() {
       destroyed = true;
       cancelAnimationFrame(animationId);
+      if (waitForReadyTimer) clearTimeout(waitForReadyTimer);
       Howler.stop();
       clearFakeSocketEvents();
       if (state.Q2FX) {

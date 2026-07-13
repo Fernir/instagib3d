@@ -2,7 +2,6 @@ import { Event } from '@/core/event.js';
 import { Console, assert } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 
-import { isWireframe } from '@/engine/mesh.js';
 import { minimapRightEdge } from '@/engine/minimap-layout.js';
 import { uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc } from '@/engine/render_text.js';
 import { Shader } from '@/engine/shader.js';
@@ -310,9 +309,6 @@ HUD.render = function (bot, table, playing) {
 
   function renderWeapons() {
     const aspect = state.canvas.width / state.canvas.height;
-    const wire = isWireframe();
-    const ICON_TEX_PX = 64;
-
     state.gl.enable(state.gl.BLEND);
     state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
 
@@ -324,8 +320,15 @@ HUD.render = function (bot, table, playing) {
     const SLOT_STEP = 0.2;
     const FRAME_HH = uiSnapHalfNdc(0.08);
     const FRAME_HW = (2.0 * FRAME_HH) / aspect;
-    const ICON_HH = uiSnapHalfNdc(0.13, ICON_TEX_PX);
-    const ICON_HW = ICON_HH / aspect;
+    // Иконка на весь слот; рамка рисуется первой, кольцо остаётся по краям.
+    const ICON_INSET = 1.7;
+    let ICON_HH = FRAME_HH * ICON_INSET;
+    let ICON_HW = ICON_HH / aspect;
+    const maxIconHW = FRAME_HW * ICON_INSET;
+    if (ICON_HW > maxIconHW) {
+      ICON_HW = maxIconHW;
+      ICON_HH = ICON_HW * aspect;
+    }
     const statHalf = uiSnapHalfNdc(1.0 / 12.0);
     const statTextSize = uiTextSizeForHalfNdc(statHalf, 2, 1.0 / 12.0);
     for (let i = WEAPON.PISTOL; i <= WEAPON.ROCKET; i++) {
@@ -359,32 +362,28 @@ HUD.render = function (bot, table, playing) {
       HUD.shader_frame.vector(HUD.shader_frame.rotate90, [0, 0, 0, 0]);
       state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
 
-      // 2) Иконка оружия поверх рамки (в wire режиме — без текстур).
-      if (!wire) {
-        HUD.shader_hud.use();
-        HUD.shader_hud.texture(HUD.shader_hud.tex, state.Weapon.skins[i].gun.getId(), 0);
-        HUD.shader_hud.vector(HUD.shader_hud.color, [1, 1, 1, owned ? 1.0 : 0.0]);
-        HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [
-          SLOT_X,
-          SLOT_Y_TOP - SLOT_STEP * i,
-          ICON_HW,
-          ICON_HH,
-        ]);
-        HUD.shader_hud.vector(HUD.shader_hud.rotate90, [1, 0, 0, 0]);
-        state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
-      }
+      // 2) Иконка оружия поверх рамки.
+      HUD.shader_hud.use();
+      HUD.shader_hud.texture(HUD.shader_hud.tex, state.Weapon.skins[i].gun.getId(), 0);
+      HUD.shader_hud.vector(HUD.shader_hud.color, [1, 1, 1, owned ? 1.0 : 0.0]);
+      HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [
+        SLOT_X,
+        SLOT_Y_TOP - SLOT_STEP * i,
+        ICON_HW,
+        ICON_HH,
+      ]);
+      HUD.shader_hud.vector(HUD.shader_hud.rotate90, [1, 0, 0, 0]);
+      state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
     }
 
     // Иконка здоровья + число — только в активной игре (не в спектаторе).
     if (playing) {
-      if (!wire) {
-        HUD.shader_hud.use();
-        HUD.shader_hud.texture(HUD.shader_hud.tex, state.Item.tex_powerup[0].getId(), 0);
-        HUD.shader_hud.vector(HUD.shader_hud.color, [2, 2, 2, 0.5]);
-        HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [-0.9, 0.9, 1.0 / 12.0 / aspect, 1.0 / 12.0]);
-        HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
-        state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
-      }
+      HUD.shader_hud.use();
+      HUD.shader_hud.texture(HUD.shader_hud.tex, state.Item.tex_powerup[0].getId(), 0);
+      HUD.shader_hud.vector(HUD.shader_hud.color, [2, 2, 2, 0.5]);
+      HUD.shader_hud.vector(HUD.shader_hud.vec_pos, [-0.9, 0.9, 1.0 / 12.0 / aspect, 1.0 / 12.0]);
+      HUD.shader_hud.vector(HUD.shader_hud.rotate90, [0, 0, 0, 0]);
+      state.gl.drawArrays(state.gl.TRIANGLE_STRIP, 0, 4);
       state.text.render([-0.85, 0.9], statTextSize, ' ' + bot.life, 2);
     }
 
@@ -434,7 +433,7 @@ function renderBottomStats(bot, playing) {
   const aspect = state.canvas.width / state.canvas.height;
   const statHalf = uiSnapHalfNdc(0.02);
   const textSize = uiTextSizeForHalfNdc(statHalf, 2, 0.02);
-  const minimapRight = isWireframe() ? -0.95 : minimapRightEdge(aspect);
+  const minimapRight = minimapRightEdge(aspect);
   let x = minimapRight + 0.06;
   const fps = state.stats ? state.stats.fps : 0;
   const ping = state.gameClient && state.gameClient.getPing ? state.gameClient.getPing() : 0;

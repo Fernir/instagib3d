@@ -214,6 +214,10 @@ class Texture {
         .catch(function () {
           finish(false, img, 1, 1);
         });
+    } else if (img && typeof img === 'object' && typeof img.getContext === 'function') {
+      const gl2 = state.gl;
+      const ok = uploadImageSource(gl2, id, img, flipY, filter, wrap, useMipmaps);
+      finish(ok, 'canvas', img.width, img.height);
     } else {
       assert(img instanceof Uint8Array);
       assert(param.size !== undefined);

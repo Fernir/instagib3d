@@ -29,6 +29,27 @@ function uiLineStep(lineHalfNdc) {
   return uiSnapHalfNdc(lineHalfNdc) * 2;
 }
 
+function uiSnapNdcCenter(ndcX, ndcY) {
+  const w = state.canvas.width;
+  const h = state.canvas.height;
+  const px = Math.round((ndcX * 0.5 + 0.5) * w);
+  const py = Math.round((ndcY * 0.5 + 0.5) * h);
+  return { nx: (px / w) * 2 - 1, ny: (py / h) * 2 - 1 };
+}
+
+function uiSnapBarHalfSize(widthNdc, heightNdc) {
+  const w = state.canvas.width;
+  const h = state.canvas.height;
+  const widthPx = Math.max(4, Math.round(widthNdc * w));
+  const heightPx = Math.max(2, Math.round(heightNdc * h));
+  return {
+    hw: widthPx / (2 * w),
+    hh: heightPx / (2 * h),
+    widthPx,
+    heightPx,
+  };
+}
+
 class Text {
   constructor() {
     //Xpos, Ypos, Width, Height, Xoffset, Yoffset, OrigW, OrigH
@@ -413,4 +434,11 @@ class Text {
   }
 }
 
-export { Text, uiLineStep, uiSnapHalfNdc, uiTextSizeForHalfNdc };
+export {
+  Text,
+  uiLineStep,
+  uiSnapBarHalfSize,
+  uiSnapHalfNdc,
+  uiSnapNdcCenter,
+  uiTextSizeForHalfNdc,
+};

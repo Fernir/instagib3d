@@ -14,6 +14,7 @@ export const Console = {
   html: () => {},
   debug() {},
   info() {},
+  warn() {},
   error() {},
 };
 

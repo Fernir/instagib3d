@@ -59,6 +59,9 @@ Console.addMessage = function (tag, ...args) {
   } else if (tag === Console.INFO) {
     str = '[INFO] ' + str;
     msg = '#g[INFO] ' + msg;
+  } else if (tag === Console.WARN) {
+    str = '[WARN] ' + str;
+    msg = '#y[WARN] ' + msg;
   }
 
   Console.messages.push(msg);
@@ -81,6 +84,10 @@ Console.info = function (...args) {
 
 Console.error = function (...args) {
   Console.addMessage(Console.ERROR, ...args);
+};
+
+Console.warn = function (...args) {
+  Console.addMessage(Console.WARN, ...args);
 };
 
 Console.dispatchCommand = function (cmd) {
@@ -144,6 +151,7 @@ Console.load = function () {
   Console.DEBUG = 0;
   Console.INFO = 1;
   Console.ERROR = 2;
+  Console.WARN = 3;
 
   Console.show = false;
   Console.slide = 0;

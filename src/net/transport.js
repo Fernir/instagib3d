@@ -764,8 +764,6 @@ class Transport {
     } else {
       /* client game: skip instanceof GameClient in ESM */
       socket.onmessage = function (e) {
-        runtime.stats.count_net_package++;
-        runtime.stats.memory_all_package += e.data.byteLength;
         onData(e.data);
       };
 
@@ -777,7 +775,7 @@ class Transport {
         view.setUint8(0, CL_PING);
         view.setUint32(1, self.ping);
         socket.send(data);
-        let pingdelay = parseInt(Console.variable('pingdelay', 'time for ping update', 1000));
+        let pingdelay = Math.max(250, parseInt(Console.variable('pingdelay', 'time for ping update', 1000)));
         setTimeout(getPing, pingdelay);
         pingtime = Date.now();
       }
@@ -799,7 +797,7 @@ class Transport {
           socket.send(data);
           Console.debug('Request for nicks', self.unknown_nicks.size);
         }
-        let nickdelay = parseInt(Console.variable('nickdelay', 'time for get nicks', 1000));
+        let nickdelay = Math.max(250, parseInt(Console.variable('nickdelay', 'time for get nicks', 1000)));
         setTimeout(getNicks, nickdelay);
       }
       getNicks();
@@ -862,8 +860,9 @@ class Transport {
       view.setUint8(3, keys);
       view.setInt16(4, fixed_pitch);
       self.socket.send(data);
-      let send_time = parseInt(
-        Console.variable('send-user-input-time', 'time for send user input', 33),
+      let send_time = Math.max(
+        16,
+        parseInt(Console.variable('send-user-input-time', 'time for send user input', 33)),
       );
       setTimeout(sendInputs, send_time);
     }

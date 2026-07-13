@@ -57,7 +57,6 @@ export class LevelLighting {
             float d = length(dv);
             float att = max(0.0, 1.0 - d / r);
             att *= att;
-            // Лёгкая зависимость от нормали (вклад слегка усиливается при «лицевом» направлении).
             float face = 1.0;
             if (length(n) > 0.001) {
                 vec3 to_light = -dv / max(d, 0.0001);
@@ -75,6 +74,14 @@ export class LevelLighting {
         return texture2D(tex_lightmap, uv_level).rgb;
     }`;
 
+  // Запечённый 3D-свет стен (world XZ), один раз при загрузке уровня.
+  static wallBakedGlsl = `
+    uniform sampler2D tex_wall_lightmap;
+    vec3 sample_wall_baked(vec2 uv_level)
+    {
+        return texture2D(tex_wall_lightmap, uv_level).rgb;
+    }`;
+
   constructor(size, wallHeight, isWall) {
     this.size = size;
     this.wallHeight = wallHeight;
@@ -86,41 +93,100 @@ export class LevelLighting {
     this.activeCount = 0;
 
     const lightmapRes = Math.min(1024, Math.max(256, size * 8));
+    this.lightmapRes = lightmapRes;
     this.lightmapInvSize = 1 / lightmapRes;
     this.lightmap = new Framebuffer(lightmapRes, lightmapRes);
+    this.wallLightmap = new Framebuffer(lightmapRes, lightmapRes);
     this.shader = new Shader(VERT_LIGHTMAP_PAINT, FRAG_LIGHTMAP_PAINT, ['quad', 'color']);
     this.bakeStaticLightmap();
+    const sun = state.sun_direction;
+    this.bakeWallLightmap([sun.x, -0.8, sun.y], 0.32);
   }
 
   texture() {
     return this.lightmap.getTexture();
   }
 
+  wallLightmapTexture() {
+    return this.wallLightmap.getTexture();
+  }
+
   active() {
     return { pos: this.posBuf, col: this.colBuf, count: this.activeCount };
   }
 
-  // Приблизительная яркость в точке (x,z) на CPU — для затемнения 2D-оверлеев
-  // (имена, HP-бары) в тёмных углах. Формула повторяет lightmap bake.
-  lightLevel(ambient, x, z) {
-    let r = ambient;
-    let g = ambient;
-    let b = ambient;
+  lmByte(v) {
+    return Math.min(255, Math.max(0, Math.round(Math.min(v, 1.28) * 255 * 0.88)));
+  }
+
+  lightAt3D(wx, wy, wz, amb, sunDir3, sunIntensity) {
+    let lr = amb;
+    let lg = amb;
+    let lb = amb;
     for (let i = 0; i < this.staticLights.length; i++) {
       const light = this.staticLights[i];
-      const dx = x - light.pos[0];
-      const dz = z - light.pos[2];
-      const dd = dx * dx + dz * dz;
+      const lp = light.pos;
+      const dx = wx - lp[0];
+      const dy = wy - lp[1];
+      const dz = wz - lp[2];
+      const dd = dx * dx + dy * dy + dz * dz;
       const rad = light.radius;
       if (dd >= rad * rad) continue;
       let att = 1 - Math.sqrt(dd) / rad;
       att *= att;
       const k = light.intensity * att;
-      r += light.color[0] * k;
-      g += light.color[1] * k;
-      b += light.color[2] * k;
+      lr += light.color[0] * k;
+      lg += light.color[1] * k;
+      lb += light.color[2] * k;
     }
-    return 0.299 * r + 0.587 * g + 0.114 * b;
+    if (sunIntensity > 0) {
+      const sunK = sunIntensity * 0.26;
+      lr += sunK;
+      lg += 0.96 * sunK;
+      lb += 0.86 * sunK;
+    }
+    return [lr, lg, lb];
+  }
+
+  // 3D lightmap стен: факелы + ambient + мягкое солнце, world (x,z) → RGB.
+  bakeWallLightmap(sunDir3, sunIntensity) {
+    const gl = state.gl;
+    const res = this.lightmapRes;
+    const amb = 0.45;
+    const sampleY = this.wallHeight * 0.55;
+    const data = new Uint8Array(res * res * 4);
+    for (let j = 0; j < res; j++) {
+      const wz = (1.0 - (j + 0.5) / res) * this.size;
+      for (let i = 0; i < res; i++) {
+        const wx = ((i + 0.5) / res) * this.size;
+        const rgb = this.lightAt3D(wx, sampleY, wz, amb, sunDir3, sunIntensity);
+        const idx = (j * res + i) * 4;
+        data[idx + 0] = this.lmByte(rgb[0]);
+        data[idx + 1] = this.lmByte(rgb[1]);
+        data[idx + 2] = this.lmByte(rgb[2]);
+        data[idx + 3] = 255;
+      }
+    }
+    const tex = this.wallLightmap.getTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      res,
+      res,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      data,
+    );
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  // Приблизительная яркость в точке (x,z) на CPU — для затемнения 2D-оверлеев.
+  lightLevel(ambient, x, z) {
+    const rgb = this.lightAt3D(x, this.wallHeight * 0.55, z, ambient, null, 0);
+    return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
   }
 
   locs(shader) {
@@ -142,7 +208,6 @@ export class LevelLighting {
     this.dynamicLights.length = 0;
   }
 
-  // priority=3 — взрывы; priority=2 — живой снаряд; priority=1 — короткая вспышка.
   addDynamicLight(x, y, z, color, intensity, radius, priority) {
     this.dynamicLights.push([
       x,
@@ -160,7 +225,6 @@ export class LevelLighting {
   selectActive(camera) {
     const cx = camera.pos.x;
     const cz = camera.pos.y;
-    // Все статические факелы уже в lightmap — здесь только динамические лайты.
     const sortedDyn = this.dynamicLights.slice();
     sortedDyn.sort(function (a, b) {
       if (a[8] !== b[8]) return b[8] - a[8];

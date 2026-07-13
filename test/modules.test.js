@@ -1,8 +1,7 @@
 import { Event } from '@/core/event.js';
 import { normalizeAngle } from '@/core/utility.js';
 import { Vector } from '@/core/vector.js';
-import { state } from '@/core/runtime-state.js';
-import { buildWireLineBuffer, isWireframe } from '@/engine/mesh.js';
+import { MeshBuilder } from '@/engine/mesh.js';
 import { Shader } from '@/engine/shader.js';
 import { Weapon } from '@/sim/weapon.js';
 import { Dynent } from '@/sim/dynent.js';
@@ -21,14 +20,7 @@ describe('core', () => {
 describe('engine', () => {
   it('экспортирует WebGL-примитивы', () => {
     expect(typeof Shader).toBe('function');
-    expect(typeof buildWireLineBuffer).toBe('function');
-  });
-
-  it('isWireframe читает state', () => {
-    state.wireframe = true;
-    state.wireframePass = true;
-    expect(isWireframe()).toBe(true);
-    state.wireframePass = false;
+    expect(typeof MeshBuilder).toBe('function');
   });
 });
 

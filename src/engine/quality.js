@@ -136,7 +136,9 @@ function clampShadowRes(res) {
 
 const STABILIZE_AFTER_DOWNGRADE_MS = 3000;
 const STABILIZE_SEVERE_MS = 1800;
-const STABILIZE_AFTER_UPGRADE_MS = 5000;
+const STABILIZE_AFTER_UPGRADE_MS = 8000;
+/** One tier/DPR step per tick — avoids MSAA/canvas thrash that can freeze the tab. */
+export const MAX_QUALITY_STEPS_PER_TICK = 1;
 
 /** Grace period after preview overlay before FPS-based downgrades begin. */
 export const PREVIEW_WARMUP_MS = 4000;
@@ -162,6 +164,10 @@ export function downgradeStepsForFps(avgFps) {
   if (avgFps < 30) return 3;
   if (avgFps < 40) return 2;
   return 1;
+}
+
+export function effectiveDowngradeSteps(avgFps) {
+  return Math.min(MAX_QUALITY_STEPS_PER_TICK, downgradeStepsForFps(avgFps));
 }
 
 export function samplesNeededForDowngrade(avgFps) {
@@ -317,7 +323,7 @@ export function initQuality(userOptions = {}) {
         return;
       }
 
-      let steps = downgradeStepsForFps(avg);
+      let steps = effectiveDowngradeSteps(avg);
       while (steps > 0 && canDowngradeQuality(this.tierIndex, this.dprScale)) {
         if (this.tierIndex > 0) {
           this.tierIndex -= 1;

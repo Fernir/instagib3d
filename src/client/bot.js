@@ -4,6 +4,7 @@ import { state, getMouseAngle, getMousePitch } from '@/core/runtime-state.js';
 import { Vector } from '@/core/vector.js';
 
 import { Shader } from '@/engine/shader.js';
+import { uiSnapBarHalfSize, uiSnapNdcCenter } from '@/engine/render_text.js';
 
 import { ITEM, WEAPON } from '@/global.js';
 
@@ -200,11 +201,13 @@ function renderBotMD2(camera, bot, spec, distFog, spawnAlpha = 1, spawnScale = 1
       const last = wSpec.model.frameBuffers.length - 1;
       const wia = Math.max(0, Math.min(last, pose.fa | 0));
       const wib = Math.max(0, Math.min(last, pose.fb | 0));
-      wSpec.model.render(m, wia, wib, lerp, wSpec.skinIndex, [1, 1, 1, fadeAlpha * spawnAlpha], lightCtx);
+      wSpec.model.render(m, wia, wib, lerp, wSpec.skinIndex, [1, 1, 1, fadeAlpha * spawnAlpha], {
+        ...lightCtx,
+        weaponBoost: 0.72,
+      });
     }
   }
 
-  // Неоновая обводка от усилений (если нет щита — щит покажет «пузырь» сверху).
   if (bot.alive && !bot.shield && bot.power) {
     let neon = null;
     if (bot.power === ITEM.QUAD) neon = [0.4, 0.2, 1.0, 1];
@@ -230,67 +233,6 @@ function renderBotMD2(camera, bot, spec, distFog, spawnAlpha = 1, spawnScale = 1
     drawShieldBubble(shieldM);
   }
 
-  return true;
-}
-
-function botWireColor(bot) {
-  if (bot.power === ITEM.QUAD) return [1.0, 0.7, 0.75, 1];
-  if (bot.power === ITEM.REGEN) return [0.75, 1.0, 0.8, 1];
-  if (bot.power === ITEM.SPEED) return [1.0, 0.9, 0.65, 1];
-  return [0.85, 0.95, 1.0, 1];
-}
-
-function botWireFillColor(bot) {
-  const c = botWireColor(bot);
-  return [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55];
-}
-
-function renderBotWirePhase(camera, bot, spec, phase, spawnAlpha, spawnScale) {
-  const pose = botPose(bot, spec);
-  if (!pose) return false;
-  const mat4 = state.mat4;
-  const m = pose.m;
-  if (spawnScale !== 1) mat4.scale(m, m, [spawnScale, spawnScale, spawnScale]);
-
-  if (phase === 'depth') {
-    pose.model.renderWireDepth(m, pose.fa, pose.fb, pose.lerp);
-    if (bot.alive && bot.weapon) {
-      const wSpec = getWeaponSpec(spec, bot.weapon.type);
-      if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
-        const last = wSpec.model.frameBuffers.length - 1;
-        const wia = Math.max(0, Math.min(last, pose.fa | 0));
-        const wib = Math.max(0, Math.min(last, pose.fb | 0));
-        wSpec.model.renderWireDepth(m, wia, wib, pose.lerp);
-      }
-    }
-    return true;
-  }
-
-  if (phase === 'fill') {
-    const fillCol = botWireFillColor(bot);
-    pose.model.renderWireFill(m, pose.fa, pose.fb, pose.lerp, fillCol);
-    if (bot.alive && bot.weapon) {
-      const wSpec = getWeaponSpec(spec, bot.weapon.type);
-      if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
-        const last = wSpec.model.frameBuffers.length - 1;
-        const wia = Math.max(0, Math.min(last, pose.fa | 0));
-        const wib = Math.max(0, Math.min(last, pose.fb | 0));
-        wSpec.model.renderWireFill(m, wia, wib, pose.lerp, [0.5, 0.52, 0.58]);
-      }
-    }
-    return true;
-  }
-
-  pose.model.renderWireDraw(m, pose.fa, pose.fb, pose.lerp, botWireColor(bot));
-  if (bot.alive && bot.weapon) {
-    const wSpec = getWeaponSpec(spec, bot.weapon.type);
-    if (wSpec && wSpec.model.frameBuffers && wSpec.model.frameBuffers.length) {
-      const last = wSpec.model.frameBuffers.length - 1;
-      const wia = Math.max(0, Math.min(last, pose.fa | 0));
-      const wib = Math.max(0, Math.min(last, pose.fb | 0));
-      wSpec.model.renderWireDraw(m, wia, wib, pose.lerp, [0.9, 0.92, 1.0, 1]);
-    }
-  }
   return true;
 }
 
@@ -344,65 +286,7 @@ function publishLocalMuzzle(model, fIa, fIb, lerp, m, fwd, now) {
   };
 }
 
-function renderFirstPersonWeaponWire(camera, phase) {
-  if (!camera || !state.viewProj3D || !state.gameClient) return;
-  const myBot = state.gameClient.getCamera ? state.gameClient.getCamera() : null;
-  if (!myBot || !myBot.weapon || !myBot.alive) return;
-  const pose = resolveViewWeaponPose(myBot);
-  if (!pose) return;
-  const wSpec = pose.wSpec;
-  const ia = pose.ia;
-  const ib = pose.ib;
-  const lerp = pose.lerp;
-  const now = Date.now();
-  const mat4 = state.mat4;
-  const speed = myBot.speed || 0;
-  const bobAmp = Math.min(1, speed / (Bot.SPEED * 0.5));
-  const t = now * 0.012;
-  const bobScale = viewWepSwitch.phase !== 'idle' ? 0.12 : 1;
-  const bobY = Math.sin(t * 2.0) * 0.018 * bobAmp * bobScale;
-  const bobX = Math.cos(t) * 0.022 * bobAmp * bobScale;
-  const yaw = camera.dynent.angle;
-  const pitch = typeof getMousePitch === 'function' ? getMousePitch() : 0;
-  const eye_h = (state.LevelRender && state.LevelRender.eye_height) || 1.6;
-  const cp = Math.cos(pitch),
-    sp = Math.sin(pitch);
-  const sy = Math.sin(yaw),
-    cy = Math.cos(yaw);
-  const right_x = cy;
-  const right_y = 0;
-  const right_z = -sy;
-  const up_x = -sy * sp;
-  const up_y = cp;
-  const up_z = -cy * sp;
-  const eye_x = camera.dynent.pos.x;
-  const eye_y = eye_h;
-  const eye_z = camera.dynent.pos.y;
-  const wpx = eye_x + right_x * bobX + up_x * bobY;
-  const wpy = eye_y + right_y * bobX + up_y * bobY;
-  const wpz = eye_z + right_z * bobX + up_z * bobY;
-  const m = mat4.create();
-  mat4.identity(m);
-  mat4.translate(m, m, [wpx, wpy, wpz]);
-  mat4.rotateY(m, m, yaw);
-  mat4.rotateX(m, m, pitch);
-  const VIEW_SCALE = 0.028;
-  mat4.scale(m, m, [-VIEW_SCALE, VIEW_SCALE, VIEW_SCALE]);
-  if (phase === 'depth') {
-    wSpec.model.renderWireDepth(m, ia, ib, lerp, true);
-    return;
-  }
-  if (phase === 'fill') {
-    return;
-  }
-  wSpec.model.renderWireDraw(m, ia, ib, lerp, [1.0, 1.0, 1.05, 1], true, true);
-}
-
 function renderFirstPersonWeapon(camera) {
-  if (state.wireframe) {
-    renderFirstPersonWeaponWire(camera, 'wire');
-    return;
-  }
   if (!camera || !state.viewProj3D) return;
   if (!state.gameClient) return;
   const myBot = state.gameClient.getCamera ? state.gameClient.getCamera() : null;
@@ -490,9 +374,10 @@ function renderFirstPersonWeapon(camera) {
   // лайтмапа в позиции игрока (не у глаз) — так оружие реагирует на свет «тайла»,
   // где стоит игрок, а не на тот, что под камерой/на полу за спиной.
   const lr2 = state.LevelRender;
-  wSpec.model.render(m, ia, ib, lerp, wSpec.skinIndex, [1.05, 1.05, 1.05, 1], {
+  wSpec.model.render(m, ia, ib, lerp, wSpec.skinIndex, [1.12, 1.12, 1.12, 1], {
     sunDir: lr2 && lr2.sunDir ? lr2.sunDir : [0.4, -0.85, 0.35],
     worldRef: [camera.dynent.pos.x, eye_h, camera.dynent.pos.y],
+    weaponBoost: 1,
   });
 
   gl.depthMask(wasDepthMask);
@@ -607,10 +492,18 @@ function drawHpBar(nx, ny, width, height, ratio, opacity) {
   const gl = state.gl;
   if (!state.quadBuffer) return;
   const a = opacity === undefined ? 1 : Math.max(0, Math.min(1, opacity));
-  const sh = ensureHpBarShader();
-  const hw = width * 0.5;
-  const hh = height * 0.5;
+  const snapped = uiSnapNdcCenter(nx, ny);
+  nx = snapped.nx;
+  ny = snapped.ny;
 
+  const bar = uiSnapBarHalfSize(width, height);
+  const hw = bar.hw;
+  const hh = bar.hh;
+  const border = 1;
+  const hwBorder = (bar.widthPx + border * 2) / (2 * state.canvas.width);
+  const hhBorder = (bar.heightPx + border * 2) / (2 * state.canvas.height);
+
+  const sh = ensureHpBarShader();
   const wasBlend = gl.isEnabled(gl.BLEND);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -619,8 +512,7 @@ function drawHpBar(nx, ny, width, height, ratio, opacity) {
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
   sh.use();
-  // фон с лёгкой обводкой через чёрный чуть больший прямоугольник
-  sh.vector(sh.rect, [nx, ny, hw + 0.004, hh + 0.004]);
+  sh.vector(sh.rect, [nx, ny, hwBorder, hhBorder]);
   sh.vector(sh.color, [0, 0, 0, 0.85 * a]);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -630,7 +522,8 @@ function drawHpBar(nx, ny, width, height, ratio, opacity) {
 
   const clamped = Math.max(0, Math.min(1, ratio));
   if (clamped > 0) {
-    const fillW = hw * clamped;
+    const fillPx = Math.max(1, Math.round(bar.widthPx * clamped));
+    const fillW = fillPx / (2 * state.canvas.width);
     const fillX = nx - hw + fillW;
     let color = [0.25, 0.85, 0.25, 0.95 * a];
     if (clamped < 0.6) color = [0.95, 0.85, 0.2, 0.95 * a];
@@ -1115,62 +1008,6 @@ class BotClient {
     renderBotMD2(camera, this, spec, 0);
   }
 
-  renderWireDepth(camera) {
-    if (this.dynent === camera) return;
-    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
-    if (this.spawnStartTime && !spawn.spawning) this.spawnStartTime = 0;
-    if (!this.alive) {
-      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
-      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
-    }
-    const spec = pickMD2Spec(this.id);
-    if (!spec || !spec.model.ready()) return;
-    if (spawn.spawning) {
-      if (spawn.alpha > 0.002) {
-        renderBotWirePhase(camera, this, spec, 'depth', spawn.alpha, spawn.scale);
-      }
-      return;
-    }
-    renderBotWirePhase(camera, this, spec, 'depth', 1, 1);
-  }
-
-  renderWireFill(camera) {
-    if (this.dynent === camera) return;
-    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
-    if (this.spawnStartTime && !spawn.spawning) this.spawnStartTime = 0;
-    if (!this.alive) {
-      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
-      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
-    }
-    const spec = pickMD2Spec(this.id);
-    if (!spec || !spec.model.ready()) return;
-    if (spawn.spawning) {
-      if (spawn.alpha > 0.002) {
-        renderBotWirePhase(camera, this, spec, 'fill', spawn.alpha, spawn.scale);
-      }
-      return;
-    }
-    renderBotWirePhase(camera, this, spec, 'fill', 1, 1);
-  }
-
-  renderWireDraw(camera) {
-    if (this.dynent === camera) return;
-    const spawn = SpawnFx.botAppearance(this.spawnStartTime);
-    if (!this.alive) {
-      const dt = this.deathStartTime ? Date.now() - this.deathStartTime : Infinity;
-      if (dt > CORPSE_LIFETIME_MS && !spawn.spawning) return;
-    }
-    const spec = pickMD2Spec(this.id);
-    if (!spec || !spec.model.ready()) return;
-    if (spawn.spawning) {
-      if (spawn.alpha > 0.002) {
-        renderBotWirePhase(camera, this, spec, 'wire', spawn.alpha, spawn.scale);
-      }
-      return;
-    }
-    renderBotWirePhase(camera, this, spec, 'wire', 1, 1);
-  }
-
   // Глубина бота в карту теней (light-space). Кастит и живой моб, и труп.
   renderShadow(lightVP, selfDynent) {
     if (this.dynent === selfDynent) return;
@@ -1236,7 +1073,6 @@ BotClient.load = function () {
 BotClient.SPEED = Bot.SPEED;
 
 BotClient.renderFirstPersonWeapon = renderFirstPersonWeapon;
-BotClient.renderFirstPersonWeaponWire = renderFirstPersonWeaponWire;
 
 Event.on('cl_botpain', function (pos, dir, id) {
   const gc = state.gameClient;

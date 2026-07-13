@@ -5,7 +5,7 @@ import { Vector } from '@/core/vector.js';
 import { Framebuffer } from '@/engine/FBO.js';
 import { bindMainFramebuffer } from '@/engine/framebuffer.js';
 import { GLSL } from '@/engine/glsl.js';
-import { MeshBuilder, drawLevelMeshesDepth, isWireframe, setWireFillStyle } from '@/engine/mesh.js';
+import { MeshBuilder } from '@/engine/mesh.js';
 import { MINIMAP_RADIUS, minimapCenter } from '@/engine/minimap-layout.js';
 import { getMobileJoyVisual, isMobileControls } from '@/engine/mobilecontrols.js';
 import { Shader } from '@/engine/shader.js';
@@ -37,9 +37,18 @@ class LevelRender3D {
     const eye_height = 1.6;
 
     const black_pixel = new Uint8Array([0, 0, 0, 255]);
+    const clear_pixel = new Uint8Array([0, 0, 0, 0]);
     const tex_visible_black = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex_visible_black);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, black_pixel);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    // Прозрачная заглушка для слотов декалей, когда decals выключены (minimal/potato).
+    const tex_decal_clear = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex_decal_clear);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, clear_pixel);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -316,17 +325,16 @@ class LevelRender3D {
         return lighting + vec3(1.0, 0.96, 0.86) * sun_dir.w * ndl * sh;
     }
 
-    // Стены: normal-offset выше пола; у основания — та же тень, что у пола (без щели).
+    // Стены: мягче normal-offset тени — иначе ndl по колонкам даёт вертикальные полосы.
     vec3 apply_sun_wall(vec3 lighting, vec3 wp, vec3 n, float height)
     {
         vec3 nn = normalize(n);
-        float ndl = dot(nn, -normalize(sun_dir.xyz));
-        ndl = max(ndl, 0.0) * 0.55 + 0.45;
+        float ndl = max(dot(nn, -normalize(sun_dir.xyz)), 0.0);
         float heightScale = smoothstep(0.12, 0.55, height);
-        float off = shadow_params.y * (1.0 + (1.0 - ndl)  * 3.0) * heightScale;
         float shBase = sun_shadow(wp);
+        float off = shadow_params.y * (1.0 + (1.0 - ndl) * 1.2) * heightScale;
         float shOff = sun_shadow(wp + nn * off);
-        float sh = mix(shBase, min(shBase, shOff), heightScale);
+        float sh = mix(shBase, min(shBase, shOff), heightScale * 0.35);
         if (height < 0.35) {
             float floorSh = sun_shadow(vec3(wp.x, 0.0, wp.z));
             sh = min(sh, mix(floorSh, sh, smoothstep(0.0, 0.35, height)));
@@ -401,15 +409,22 @@ class LevelRender3D {
         lighting += sample_static_lightmap(uv_level) * receive_lights;
         lighting += accum_dyn_lights(v_world_pos, n) * receive_lights;
         lighting = apply_sun_ground(lighting, v_world_pos, n);
-        vec3 col = albedo * lighting;
-        float lava_glow = clamp(max(lighting.r, max(lighting.g, lighting.b)) / 0.5, 0.15, 1.0);
-        col += lava.rgb * lava_mask * 0.45 * lava_glow;
 
         vec4 decal = texture2D(tex_decal, uv_level);
         float dry = 1.0 - lava_mask;
-        // Декаль получает то же освещение, что и поверхность пола под ней.
-        // Без этого в тёмных коридорах кровь и следы попаданий «светятся».
-        col = col * (1.0 - decal.a * dry) + decal.rgb * dry * lighting;
+        float lava_glow = clamp(max(lighting.r, max(lighting.g, lighting.b)) / 0.5, 0.15, 1.0);
+
+        vec3 groundLit = ground.rgb * lighting;
+        groundLit = groundLit * (1.0 - decal.a * dry) + decal.rgb * dry * lighting;
+        vec3 groundCol = groundLit;
+
+        float lavaDetail = dot(lava.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 lavaEm = lava.rgb * (1.05 + lava_glow * 0.45);
+        lavaEm *= 0.42 + lavaDetail * 1.35 + wave.b * 0.12;
+        vec3 lavaClassic = lava.rgb * lighting + lava.rgb * 0.55 * lava_glow;
+        vec3 lavaCol = lavaClassic;
+
+        vec3 col = mix(groundCol, lavaCol, lava_mask);
 
         col = apply_dist_fog(col, v_world_pos, cam_pos.xyz);
         gl_FragColor = vec4(col, 1.0);
@@ -424,7 +439,6 @@ class LevelRender3D {
     uniform sampler2D tex_wall_decal;
     uniform vec4 scale_world;
     uniform vec4 cam_pos;
-    uniform vec4 lightmap_params;
     varying vec3 v_world_pos;
     varying vec2 v_world;
     varying highp vec2 v_uv;
@@ -432,7 +446,7 @@ class LevelRender3D {
     varying float v_height;
     varying vec2 v_atlas;
     ${LevelLighting.dynamicGlsl}
-    ${LevelLighting.staticLightmapGlsl}
+    ${LevelLighting.wallBakedGlsl}
     ${FOG_MIX_GLSL}
     ${SHADOW_GLSL}
 
@@ -441,27 +455,17 @@ class LevelRender3D {
         vec3 n = normalize(v_normal);
         vec4 wall = texture2D(tex_wall, fract(v_uv));
         vec3 albedo = wall.rgb;
+
         vec2 uv_level = vec2(v_world.x * scale_world.x, 1.0 - v_world.y * scale_world.x);
-
-        float h_attn = smoothstep(0.0, 0.7, v_height) - smoothstep(3.6, 4.0, v_height);
-        h_attn = clamp(h_attn, 0.0, 1.0);
-
-        vec3 lighting = vec3(${AMBIENT_BASE.toFixed(2)});
-        float lmStep = lightmap_params.x;
-        vec3 lm = texture2D(tex_lightmap, uv_level).rgb;
-        lm += texture2D(tex_lightmap, uv_level + vec2(lmStep, 0.0)).rgb;
-        lm += texture2D(tex_lightmap, uv_level - vec2(lmStep, 0.0)).rgb;
-        lm += texture2D(tex_lightmap, uv_level + vec2(0.0, lmStep)).rgb;
-        lm += texture2D(tex_lightmap, uv_level - vec2(0.0, lmStep)).rgb;
-        lighting += lm * 0.2 * h_attn;
+        vec3 lighting = sample_wall_baked(uv_level);
+        float sh = sun_shadow(v_world_pos);
+        lighting *= mix(0.78, 1.0, sh);
         lighting += accum_dyn_lights(v_world_pos, vec3(0.0));
-        lighting = apply_sun_wall(lighting, v_world_pos, n, v_height);
 
-        vec3 col = albedo * lighting;
-
+        vec3 lit = albedo * lighting;
         vec4 decal = texture2D(tex_wall_decal, v_atlas);
-        // Декаль получает то же освещение, что и стена под ней (premultiplied).
-        col = col * (1.0 - decal.a) + decal.rgb * lighting;
+        lit = lit * (1.0 - decal.a) + decal.rgb * lighting;
+        vec3 col = lit;
 
         col = apply_dist_fog(col, v_world_pos, cam_pos.xyz);
         gl_FragColor = vec4(col, 1.0);
@@ -532,11 +536,10 @@ class LevelRender3D {
         lighting += sample_static_lightmap(uv_level);
         lighting += accum_dyn_lights(v_world_pos, n);
         lighting = apply_sun(lighting, v_world_pos, n, 1.0);
-        vec3 col = albedo * lighting;
-
+        vec3 lit = albedo * lighting;
         vec4 decal = texture2D(tex_decal, uv_level);
-        // Декаль получает то же освещение, что и доска моста под ней.
-        col = col * (1.0 - decal.a) + decal.rgb * lighting;
+        lit = lit * (1.0 - decal.a) + decal.rgb * lighting;
+        vec3 col = lit;
 
         col = apply_dist_fog(col, v_world_pos, cam_pos.xyz);
         gl_FragColor = vec4(col, 1.0);
@@ -666,11 +669,10 @@ class LevelRender3D {
       'view_proj',
       'tex_wall',
       'tex_wall_decal',
-      'tex_lightmap',
+      'tex_wall_lightmap',
       'tex_visible',
       'scale_world',
       'cam_pos',
-      'lightmap_params',
       'dyn_light_count',
       'tex_shadow',
       'light_vp',
@@ -777,17 +779,12 @@ class LevelRender3D {
         pushAdj(epKey(s.p1[0], s.p1[1]), s.p0);
       }
       const COS_TURN = 0.5; // <60° поворота — сглаживаем; резче (~угол 90°) — прямо
-      const CURVE_DEV_THRESH = 0.045;
-      const WALL_CURVE_STEP = 0.55;
-      const WALL_CURVE_MAX = 6;
+      const WALL_CURVE_STEP = 0.26;
+      const WALL_CURVE_MAX = 16;
       const splineMid = (p0, p1, m0x, m0z, m1x, m1z) => [
         0.5 * p0[0] + 0.125 * m0x + 0.5 * p1[0] - 0.125 * m1x,
         0.5 * p0[1] + 0.125 * m0z + 0.5 * p1[1] - 0.125 * m1z,
       ];
-      const segCurveDev = (p0, p1, m0x, m0z, m1x, m1z) => {
-        const s = splineMid(p0, p1, m0x, m0z, m1x, m1z);
-        return Math.hypot(s[0] - (p0[0] + p1[0]) * 0.5, s[1] - (p0[1] + p1[1]) * 0.5);
-      };
       const eqPt = (a, bx, bz) => Math.abs(a[0] - bx) < 1e-5 && Math.abs(a[1] - bz) < 1e-5;
       // Сосед в узле (atx,atz), лучше всего продолжающий направление segDir.
       // incoming=true — ищем точку ПЕРЕД узлом (dir far->at ~ segDir);
@@ -838,11 +835,7 @@ class LevelRender3D {
         const m0z = prev ? (p1[1] - prev[1]) * 0.5 : dz;
         const m1x = next ? (next[0] - p0[0]) * 0.5 : dx;
         const m1z = next ? (next[1] - p0[1]) * 0.5 : dz;
-        const curveDev = segCurveDev(p0, p1, m0x, m0z, m1x, m1z);
-        const curved = curveDev > CURVE_DEV_THRESH;
-        const nu = curved
-          ? Math.min(WALL_CURVE_MAX, Math.max(2, Math.ceil(segLen / WALL_CURVE_STEP)))
-          : 1;
+        const nu = Math.min(WALL_CURVE_MAX, Math.max(2, Math.ceil(segLen / WALL_CURVE_STEP)));
 
         const cols = new Array(nu + 1);
         for (let i = 0; i <= nu; i++) {
@@ -906,7 +899,7 @@ class LevelRender3D {
 
       const wall_base = 0;
       for (let si = 0; si < segCols.length; si++) {
-        const { seg, cols, nu, prev, next } = segCols[si];
+        const { seg, cols, nu } = segCols[si];
         const segLen = seg.len;
         const r = seg.atlasRect;
         const iu0 = r ? r.u0 : 0;
@@ -923,22 +916,27 @@ class LevelRender3D {
 
         // Размазываем сваренную нормаль вдоль сегмента у узлов — убирает резкий
         // перелом ndl/теней на последних «плитках» перед углом.
-        const normSpan = Math.max(2, Math.min(8, Math.ceil(nu * 0.22)));
-        if (prev) {
-          for (let i = 1; i < normSpan && i < nu; i++) {
-            const t = i / normSpan;
-            let nx = w0[0] + (cols[i][2] - w0[0]) * t;
-            let nz = w0[1] + (cols[i][3] - w0[1]) * t;
-            const l = Math.hypot(nx, nz) || 1;
-            cols[i][2] = nx / l;
-            cols[i][3] = nz / l;
-          }
+        const normSpan = Math.max(4, Math.min(16, Math.ceil(nu * 0.5)));
+        for (let i = 1; i < normSpan && i < nu; i++) {
+          const t = i / normSpan;
+          let nx = w0[0] + (cols[i][2] - w0[0]) * t;
+          let nz = w0[1] + (cols[i][3] - w0[1]) * t;
+          const l = Math.hypot(nx, nz) || 1;
+          cols[i][2] = nx / l;
+          cols[i][3] = nz / l;
         }
-        if (next) {
-          for (let i = nu - 1; i > nu - normSpan && i > 0; i--) {
-            const t = (nu - i) / normSpan;
-            let nx = w1[0] + (cols[i][2] - w1[0]) * t;
-            let nz = w1[1] + (cols[i][3] - w1[1]) * t;
+        for (let i = nu - 1; i > nu - normSpan && i > 0; i--) {
+          const t = (nu - i) / normSpan;
+          let nx = w1[0] + (cols[i][2] - w1[0]) * t;
+          let nz = w1[1] + (cols[i][3] - w1[1]) * t;
+          const l = Math.hypot(nx, nz) || 1;
+          cols[i][2] = nx / l;
+          cols[i][3] = nz / l;
+        }
+        for (let pass = 0; pass < 2; pass++) {
+          for (let i = 1; i < nu; i++) {
+            let nx = (cols[i - 1][2] + cols[i][2] + cols[i + 1][2]) / 3;
+            let nz = (cols[i - 1][3] + cols[i][3] + cols[i + 1][3]) / 3;
             const l = Math.hypot(nx, nz) || 1;
             cols[i][2] = nx / l;
             cols[i][3] = nz / l;
@@ -1350,6 +1348,7 @@ class LevelRender3D {
     if (state.quality) this.applyQuality(state.quality);
     this.beginFrame = function (camera) {
       state.viewProj3D = buildViewProjection(camera);
+      this.camEye = fogCam.eye;
       visFrame++;
       if (visFrame === 1 || visFrame % visInterval === 0) {
         renderVisibleMap(camera);
@@ -1433,19 +1432,15 @@ class LevelRender3D {
       gl.depthFunc(gl.LEQUAL);
       gl.disable(gl.BLEND);
 
-      if (isWireframe()) {
-        drawLevelMeshesDepth([wall_mesh, floor_mesh, ceiling_mesh, bridges_mesh], { noCull: true });
-        return;
-      }
-
       const view_proj = state.viewProj3D;
       const detail_scale = (10 * size) / 64 / size;
       const level_scale = 1 / size;
       const t = (Date.now() % 100000) * 0.001;
       const cam_eye_v = [fogCam.eye[0], fogCam.eye[1], fogCam.eye[2], 0];
 
-      const decal_tex = decalsEnabled ? decals.floorTexture() : tex_visible_black;
+      const decal_tex = decalsEnabled ? decals.floorTexture() : tex_decal_clear;
       const lightmap_tex = lighting.texture();
+      const wall_lightmap_tex = lighting.wallLightmapTexture();
       const visible_tex = fbo_visible.getTexture();
 
       shader_floor.use();
@@ -1467,25 +1462,24 @@ class LevelRender3D {
       applyShadow(shader_floor, 9);
       lighting.apply(lights_loc_floor);
       floor_mesh.bind(meshLocs);
-      if (!isWireframe()) floor_mesh.draw();
+      floor_mesh.draw();
 
       shader_wall.use();
       shader_wall.matrix(shader_wall.view_proj, view_proj);
       shader_wall.vector(shader_wall.scale_world, [level_scale, detail_scale * 0.6, 0, 0]);
       shader_wall.vector(shader_wall.cam_pos, cam_eye_v);
-      shader_wall.vector(shader_wall.lightmap_params, [lighting.lightmapInvSize, 0, 0, 0]);
       shader_wall.texture(shader_wall.tex_wall, tex_wall.getId(), 0);
-      shader_wall.texture(shader_wall.tex_lightmap, lightmap_tex, 1);
+      shader_wall.texture(shader_wall.tex_wall_lightmap, wall_lightmap_tex, 1);
       shader_wall.texture(shader_wall.tex_visible, visible_tex, 2);
       shader_wall.texture(
         shader_wall.tex_wall_decal,
-        decalsEnabled ? decals.wallTexture() || tex_visible_black : tex_visible_black,
+        decalsEnabled ? decals.wallTexture() || tex_decal_clear : tex_decal_clear,
         3,
       );
       applyShadow(shader_wall, 4);
       lighting.apply(lights_loc_wall);
       wall_mesh.bind(meshLocs);
-      if (!isWireframe()) wall_mesh.draw();
+      wall_mesh.draw();
 
       shader_ceiling.use();
       shader_ceiling.matrix(shader_ceiling.view_proj, view_proj);
@@ -1496,7 +1490,7 @@ class LevelRender3D {
       shader_ceiling.texture(shader_ceiling.tex_visible, visible_tex, 2);
       lighting.apply(lights_loc_ceiling);
       ceiling_mesh.bind(meshLocs);
-      if (!isWireframe()) ceiling_mesh.draw();
+      ceiling_mesh.draw();
 
       if (bridges_mesh.count > 0) {
         shader_bridge.use();
@@ -1510,43 +1504,11 @@ class LevelRender3D {
         applyShadow(shader_bridge, 4);
         lighting.apply(lights_loc_bridge);
         bridges_mesh.bind(meshLocs);
-        if (!isWireframe()) bridges_mesh.draw();
+        bridges_mesh.draw();
       }
 
       wall_mesh.unbind(meshLocs);
       ceiling_mesh.unbind(meshLocs);
-    };
-    this.drawLevelWireDepth = function () {
-      if (!this.ready() || !isWireframe()) return;
-      drawLevelMeshesDepth([wall_mesh, floor_mesh, ceiling_mesh, bridges_mesh], { noCull: true });
-    };
-    this.drawLevelWireFill = function () {
-      if (!this.ready() || !isWireframe()) return;
-      const sun = this.sunDir || [0.4, -0.8, 0.35];
-      const depthInfo = this.getSceneDepthInfo();
-      const fillDepth = depthInfo.ready ? { sceneDepth: depthInfo } : null;
-      setWireFillStyle([0.2, 0.22, 0.26], sun);
-      wall_mesh.bind(meshLocs);
-      wall_mesh.drawWireFill(fillDepth);
-      setWireFillStyle([0.14, 0.17, 0.13], sun);
-      floor_mesh.bind(meshLocs);
-      floor_mesh.drawWireFill(fillDepth);
-      setWireFillStyle([0.12, 0.14, 0.17], sun);
-      ceiling_mesh.bind(meshLocs);
-      ceiling_mesh.drawWireFill(fillDepth);
-      if (bridges_mesh.count > 0) {
-        setWireFillStyle([0.18, 0.2, 0.22], sun);
-        bridges_mesh.bind(meshLocs);
-        bridges_mesh.drawWireFill(fillDepth);
-      }
-      floor_mesh.unbind(meshLocs);
-    };
-    this.drawLevelWire = function () {
-      if (!this.ready() || !isWireframe()) return;
-      floor_mesh.drawWire();
-      wall_mesh.drawWire();
-      ceiling_mesh.drawWire();
-      if (bridges_mesh.count > 0) bridges_mesh.drawWire();
     };
     this.beginSpritePass = function () {
       gl.enable(gl.DEPTH_TEST);

@@ -86,6 +86,9 @@ export function viewportCssSize() {
   };
 }
 
+const LAYOUT_EPS = 0.5;
+const BUFFER_EPS = 1;
+
 export function resizeGameCanvas(canvas, gl) {
   applyViewportLayout(canvas);
   const rect = canvas.getBoundingClientRect();
@@ -95,8 +98,12 @@ export function resizeGameCanvas(canvas, gl) {
   const pw = Math.max(1, Math.round(w * dpr));
   const ph = Math.max(1, Math.round(h * dpr));
 
-  const layoutChanged = canvas._layoutW !== w || canvas._layoutH !== h;
-  const bufferChanged = canvas.width !== pw || canvas.height !== ph;
+  const layoutChanged =
+    canvas._layoutW == null ||
+    Math.abs(canvas._layoutW - w) > LAYOUT_EPS ||
+    Math.abs(canvas._layoutH - h) > LAYOUT_EPS;
+  const bufferChanged =
+    Math.abs(canvas.width - pw) > BUFFER_EPS || Math.abs(canvas.height - ph) > BUFFER_EPS;
   if (!layoutChanged && !bufferChanged) return;
 
   canvas._layoutW = w;
@@ -104,11 +111,19 @@ export function resizeGameCanvas(canvas, gl) {
   canvas.width = pw;
   canvas.height = ph;
   if (gl) gl.viewport(0, 0, pw, ph);
+  if (bufferChanged && state.msaa) state.msaa.dispose();
   state.Console?.syncMobileInputLayout?.();
 }
 
 export function bindViewportResize(canvas, gl) {
-  const onResize = () => resizeGameCanvas(canvas, gl);
+  let resizeRaf = 0;
+  const onResize = () => {
+    if (resizeRaf) return;
+    resizeRaf = requestAnimationFrame(() => {
+      resizeRaf = 0;
+      resizeGameCanvas(canvas, gl);
+    });
+  };
   window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', onResize);
   document.addEventListener('fullscreenchange', onResize);
@@ -117,6 +132,7 @@ export function bindViewportResize(canvas, gl) {
   window.visualViewport?.addEventListener('scroll', onResize);
   onResize();
   return () => {
+    if (resizeRaf) cancelAnimationFrame(resizeRaf);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('orientationchange', onResize);
     document.removeEventListener('fullscreenchange', onResize);

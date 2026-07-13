@@ -109,9 +109,9 @@ function installHintText() {
     return 'Режим как в приложении: Поделиться → «На экран Домой»';
   }
   if (installPrompt) {
-    return 'Режим как в приложении: установите игру или нажмите Play для полного экрана';
+    return 'Режим как в приложении: установите игру или коснитесь экрана для полного экрана';
   }
-  return 'Режим как в приложении: нажмите Play — откроется полный экран';
+  return 'Режим как в приложении: коснитесь экрана — откроется полный экран';
 }
 
 function ensureInstallHint() {
@@ -194,6 +194,7 @@ export function initMobileDisplay(canvas) {
 
   document.addEventListener('visibilitychange', onVisibilityChange);
   showInstallHint();
+  enterMobileImmersiveMode();
 
   if (state.Console?.addCommand) {
     state.Console.addCommand('fullscreen', 'toggle browser fullscreen (mobile)', async function () {

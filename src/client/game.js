@@ -2,9 +2,7 @@ import { Event } from '@/core/event.js';
 import { Console } from '@/core/polyfill.js';
 import { state } from '@/core/runtime-state.js';
 
-import { isWireframe } from '@/engine/mesh.js';
 import { isMobileControls } from '@/engine/mobilecontrols.js';
-import { enterMobileImmersiveMode } from '@/engine/fullscreen.js';
 import { uiTextSizeForHalfNdc } from '@/engine/render_text.js';
 import { Shader } from '@/engine/shader.js';
 
@@ -217,15 +215,6 @@ class GameClient {
       state.godNick = state.godMode ? nick : null;
       Console.info('God mode ' + (state.godMode ? 'ON' : 'OFF'));
     });
-    Console.addCommand('wire', 'toggle 3D wireframe (on/off/toggle)', function (val) {
-      if (val === 'on' || val === '1' || val === 'true') state.wireframe = true;
-      else if (val === 'off' || val === '0' || val === 'false') state.wireframe = false;
-      else state.wireframe = !state.wireframe;
-      Console.info('Wireframe ' + (state.wireframe ? 'ON' : 'OFF'));
-    });
-    Console.addCommand('trafik', 'Average trafik (byte per package)', function () {
-      Console.info((state.stats.memory_all_package / state.stats.count_net_package) | 0);
-    });
 
     this.isPlaying = function () {
       return playing;
@@ -255,7 +244,6 @@ class GameClient {
     this.handlePlayClick = function () {
       if (playing || !transport) return false;
       state.unlockAudio?.();
-      if (isMobileControls()) enterMobileImmersiveMode();
       playing = true;
       state.playing = true;
       state.updateAudioMute?.();
@@ -549,73 +537,36 @@ class GameClient {
         });
       }
 
-      state.wireframePass = state.wireframe;
       levelRender.render(mybot.dynent);
 
       if (state.quality?.q2fx !== false && state.Q2FX) state.Q2FX.update();
 
-      if (isWireframe()) {
-        const gl = state.gl;
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthMask(true);
-        gl.depthFunc(gl.LEQUAL);
-        gl.disable(gl.BLEND);
-        frameitems.forEach(function (item) {
-          state.Item.renderWireDepth(mybot.dynent, item);
-        });
-        framebots.forEach(function (bot) {
-          bot.renderWireDepth(mybot.dynent);
-        });
-        if (state.Bot && state.Bot.renderFirstPersonWeaponWire) {
-          state.Bot.renderFirstPersonWeaponWire(mybot, 'depth');
-        }
-        frameitems.forEach(function (item) {
-          state.Item.renderWireFill(mybot.dynent, item);
-        });
-        framebots.forEach(function (bot) {
-          bot.renderWireFill(mybot.dynent);
-        });
-        levelRender.drawLevelWire();
-        frameitems.forEach(function (item) {
-          state.Item.renderWireDraw(mybot.dynent, item);
-        });
-        framebots.forEach(function (bot) {
-          bot.renderWireDraw(mybot.dynent);
-        });
-        if (state.Bot && state.Bot.renderFirstPersonWeaponWire) {
-          state.Bot.renderFirstPersonWeaponWire(mybot, 'depth');
-          state.Bot.renderFirstPersonWeaponWire(mybot, 'wire');
-        }
-      }
-
       levelRender.beginSpritePass();
 
-      if (!isWireframe()) {
-        state.gl.enable(state.gl.BLEND);
-        state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
+      state.gl.enable(state.gl.BLEND);
+      state.gl.blendFunc(state.gl.SRC_ALPHA, state.gl.ONE_MINUS_SRC_ALPHA);
 
-        if (state.quality?.particles !== false) {
-          state.Particle.render(mybot.dynent, 0);
-        }
-        frameitems.forEach(function (item) {
-          state.Item.render(mybot.dynent, item);
-        });
-        SpawnFx.render(mybot.dynent, 'floor');
-        framebots.forEach(function (bot) {
-          bot.render(mybot.dynent);
-        });
-        SpawnFx.render(mybot.dynent, 'pillar');
-        state.BulletClient.render(mybot.dynent);
-        if (state.quality?.particles !== false) {
-          state.Particle.render(mybot.dynent, 1);
-          state.Particle.render(mybot.dynent, 2);
-        }
-        if (state.quality?.q2fx !== false && state.Q2FX) state.Q2FX.render(mybot.dynent);
-
-        if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
+      if (state.quality?.particles !== false) {
+        state.Particle.render(mybot.dynent, 0);
       }
+      frameitems.forEach(function (item) {
+        state.Item.render(mybot.dynent, item);
+      });
+      SpawnFx.render(mybot.dynent, 'floor');
+      framebots.forEach(function (bot) {
+        bot.render(mybot.dynent);
+      });
+      SpawnFx.render(mybot.dynent, 'pillar');
+      state.BulletClient.render(mybot.dynent);
+      if (state.quality?.particles !== false) {
+        state.Particle.render(mybot.dynent, 1);
+        state.Particle.render(mybot.dynent, 2);
+      }
+      if (state.quality?.q2fx !== false && state.Q2FX) state.Q2FX.render(mybot.dynent);
 
-      if (state.Bot && state.Bot.renderFirstPersonWeapon && !isWireframe()) {
+      if (levelRender.renderVolumetricFog) levelRender.renderVolumetricFog();
+
+      if (state.Bot && state.Bot.renderFirstPersonWeapon) {
         state.Bot.renderFirstPersonWeapon(mybot);
       }
 
@@ -626,12 +577,10 @@ class GameClient {
         bot.renderStats(mybot.dynent);
       });
 
-      state.wireframePass = false;
-      if (!isWireframe() || isMobileControls()) levelRender.renderMinimap(mybot.dynent);
+      levelRender.renderMinimap(mybot.dynent);
       state.HUD.render(mybot, table, playing);
       if (!playing) self.renderPlayOverlay();
-      else if (!isWireframe())
-        state.text.render([0, 0], 3, '#w+', 1, { center: true, visibile: true });
+      else state.text.render([0, 0], 3, '#w+', 1, { center: true, visibile: true });
     };
 
     if (socket.connect) socket.connect();

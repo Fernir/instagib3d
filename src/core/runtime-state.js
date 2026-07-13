@@ -22,8 +22,6 @@ export const state = {
   audioUnlocked: false,
   godMode: false,
   godNick: null,
-  wireframe: false,
-  wireframePass: false,
   localRoom: null,
   playing: false,
   wakeLock: null,
